@@ -1,0 +1,392 @@
+/* ─────────────────────────────────────────────
+ * 모바일 우선 (Mobile First)
+ * ───────────────────────────────────────────── */
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+    margin: 0;
+    padding: 12px 12px max(16px, env(safe-area-inset-bottom));
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Pretendard",
+        "Segoe UI", Roboto, sans-serif;
+    background: #f5f6f8;
+    color: #1a1a1a;
+    line-height: 1.5;
+    font-size: 16px;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior-y: contain;
+}
+
+#app {
+    max-width: 720px;
+    margin: 0 auto;
+}
+
+.card {
+    background: #fff;
+    border-radius: 14px;
+    padding: 20px 18px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    margin-bottom: 12px;
+}
+
+h1 { margin: 0 0 16px; font-size: 22px; line-height: 1.25; }
+h2 { margin: 0 0 14px; font-size: 19px; line-height: 1.3; }
+h3 { margin: 18px 0 8px; font-size: 16px; color: #444; }
+
+p { margin: 8px 0; }
+
+.meta {
+    font-size: 13px;
+    color: #888;
+}
+
+.header-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.header-row h1 { margin: 0; flex: 1; }
+
+.problem {
+    font-size: 21px;
+    padding: 18px 14px;
+    background: #f8f9fb;
+    border-radius: 10px;
+    margin: 14px 0;
+    text-align: center;
+    overflow-x: auto;
+    word-break: keep-all;
+}
+
+/* ─────────────────────────────────────────────
+ * 입력 / 버튼 (터치 친화)
+ * ───────────────────────────────────────────── */
+
+.answer {
+    width: 100%;
+    padding: 14px 16px;
+    font-size: 17px;
+    border: 2px solid #d0d4dc;
+    border-radius: 10px;
+    margin-bottom: 10px;
+    font-family: inherit;
+    -webkit-appearance: none;
+    appearance: none;
+    background: #fff;
+}
+
+.answer:focus {
+    outline: none;
+    border-color: #4a7eff;
+}
+
+button {
+    padding: 14px 20px;
+    font-size: 16px;
+    border: 1.5px solid #d0d4dc;
+    background: #fff;
+    color: #1a1a1a;
+    border-radius: 10px;
+    cursor: pointer;
+    font-family: inherit;
+    margin: 0 0 8px;
+    min-height: 48px;
+    -webkit-tap-highlight-color: transparent;
+    transition: background 0.15s, opacity 0.15s;
+}
+
+button:active:not([disabled]) { opacity: 0.7; }
+
+button.primary {
+    background: #4a7eff;
+    color: #fff;
+    border-color: #4a7eff;
+    font-weight: 600;
+}
+
+button.block {
+    display: block;
+    width: 100%;
+}
+
+button[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+button.link-btn {
+    background: transparent;
+    border: none;
+    color: #4a7eff;
+    font-size: 14px;
+    padding: 6px 10px;
+    min-height: auto;
+    margin: 0;
+}
+
+/* ─────────────────────────────────────────────
+ * 인증 (로그인 / 회원가입)
+ * ───────────────────────────────────────────── */
+
+.auth-card { max-width: 440px; margin: 24px auto 0; }
+
+.auth-tabs {
+    display: flex;
+    gap: 4px;
+    margin: 16px 0;
+    background: #f0f2f5;
+    border-radius: 10px;
+    padding: 4px;
+}
+
+.auth-tabs .tab {
+    flex: 1;
+    background: transparent;
+    border: none;
+    padding: 10px;
+    font-size: 15px;
+    font-weight: 600;
+    color: #666;
+    border-radius: 8px;
+    margin: 0;
+    min-height: auto;
+}
+
+.auth-tabs .tab.active {
+    background: #fff;
+    color: #1a1a1a;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+}
+
+.auth-error {
+    background: #fbeaea;
+    color: #b3261e;
+    padding: 10px 14px;
+    border-radius: 8px;
+    font-size: 14px;
+    margin: 10px 0;
+}
+
+.auth-hint {
+    text-align: center;
+    margin-top: 14px;
+}
+
+/* ─────────────────────────────────────────────
+ * 5지선다 보기
+ * ───────────────────────────────────────────── */
+
+.choices {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 18px 0;
+}
+
+.choice {
+    text-align: left;
+    padding: 16px 14px;
+    font-size: 17px;
+    background: #fff;
+    border: 2px solid #d0d4dc;
+    border-radius: 12px;
+    cursor: pointer;
+    margin: 0;
+    line-height: 1.4;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    width: 100%;
+    min-height: 56px;
+    transition: background 0.15s, border-color 0.15s;
+    color: #1a1a1a;
+}
+
+.choice:active:not(.disabled) {
+    background: #eef3ff;
+    border-color: #4a7eff;
+}
+
+.choice.selected {
+    border-color: #4a7eff;
+    background: #eef3ff;
+    box-shadow: 0 0 0 3px rgba(74, 126, 255, 0.15);
+}
+
+.choice.correct {
+    border-color: #1a7f3c;
+    background: #e8f5ec;
+    color: #1a7f3c;
+    font-weight: 600;
+}
+
+.choice.wrong {
+    border-color: #b3261e;
+    background: #fbeaea;
+    color: #7c1a14;
+    font-weight: 600;
+}
+
+.choice.disabled { cursor: default; }
+
+.choice-num {
+    font-weight: 700;
+    color: #888;
+    min-width: 26px;
+    font-size: 18px;
+    flex-shrink: 0;
+}
+
+.choice.correct .choice-num,
+.choice.selected .choice-num,
+.choice.wrong .choice-num { color: inherit; }
+
+/* ─────────────────────────────────────────────
+ * 정답/오답 알림 박스
+ * ───────────────────────────────────────────── */
+
+.correct {
+    color: #1a7f3c;
+    font-size: 17px;
+    font-weight: 600;
+    padding: 12px 16px;
+    background: #e8f5ec;
+    border-radius: 10px;
+    margin: 12px 0;
+}
+
+.wrong {
+    color: #b3261e;
+    font-size: 17px;
+    font-weight: 600;
+    padding: 12px 16px;
+    background: #fbeaea;
+    border-radius: 10px;
+    margin: 12px 0;
+}
+
+.solution {
+    background: #fff8e6;
+    padding: 12px 16px;
+    border-radius: 10px;
+    margin: 12px 0;
+    color: #5b4400;
+    font-size: 15px;
+}
+
+.inferred {
+    background: #eef2ff;
+    padding: 12px 16px;
+    border-radius: 10px;
+    margin: 12px 0;
+    color: #2540a8;
+    font-size: 15px;
+}
+
+/* ─────────────────────────────────────────────
+ * 결과 / 약점 / 기록
+ * ───────────────────────────────────────────── */
+
+.weakness-list {
+    padding-left: 0;
+    list-style: none;
+    margin: 0;
+}
+
+.weakness-list li {
+    padding: 12px 14px;
+    margin: 6px 0;
+    background: #f8f9fb;
+    border-left: 3px solid #d0d4dc;
+    border-radius: 6px;
+}
+
+.weakness-list li.root {
+    border-left-color: #ff8a00;
+    background: #fff5e6;
+    font-weight: 600;
+}
+
+.history { font-size: 14px; color: #555; }
+
+.history-item {
+    padding: 10px 12px;
+    margin: 6px 0;
+    border-radius: 6px;
+    background: #f8f9fb;
+    word-break: break-word;
+}
+
+.history-item.wrong { background: #fbeaea; }
+.history-item.correct { background: #e8f5ec; }
+
+.resume-banner {
+    background: #fff5e6;
+    border-left: 3px solid #ff8a00;
+    padding: 12px 14px;
+    border-radius: 8px;
+    margin: 12px 0;
+    font-size: 15px;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    margin-bottom: 14px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: #4a7eff;
+    transition: width 0.3s;
+}
+
+/* ─────────────────────────────────────────────
+ * 수식 — 분수 / 루트
+ * ───────────────────────────────────────────── */
+
+.frac {
+    display: inline-flex;
+    flex-direction: column;
+    vertical-align: middle;
+    text-align: center;
+    margin: 0 3px;
+    font-size: 0.95em;
+    line-height: 1;
+}
+.frac .num {
+    border-bottom: 1.5px solid currentColor;
+    padding: 1px 6px 2px;
+}
+.frac .den {
+    padding: 2px 6px 0;
+}
+
+.sqrt-arg {
+    border-top: 1.5px solid currentColor;
+    padding: 1px 3px 0;
+    margin-left: -3px;
+}
+
+/* ─────────────────────────────────────────────
+ * 큰 화면 (태블릿/PC) 추가 스타일
+ * ───────────────────────────────────────────── */
+
+@media (min-width: 600px) {
+    body { padding: 24px 16px; }
+    .card { padding: 28px; }
+    h1 { font-size: 28px; }
+    h2 { font-size: 22px; }
+    h3 { font-size: 17px; }
+    .problem { font-size: 22px; padding: 20px; }
+    button { min-height: 44px; padding: 12px 22px; }
+}
