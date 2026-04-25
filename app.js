@@ -37,8 +37,11 @@ const MASTERY_THRESHOLD = 3;          // 연속 정답 N회 = 마스터
 const MASTERY_RECHECK_DAYS = 14;      // 마스터 후 N일 지나면 재검증
 const MASTERY_RANDOM_RECHECK = 0.15;  // 마스터여도 무작위 재검증 확률
 
-const DIAGNOSTIC_BATTERY = ['F04', 'F05', 'I05', 'M06', 'P01', 'P07', 'E03'];
-const MAX_DX_QUESTIONS = 15;
+const DIAGNOSTIC_BATTERY = [
+    'F04', 'F05', 'I05', 'M06', 'P01', 'P07', 'E03',  // 수와 식
+    'B02', 'H03', 'G02', 'V01'                          // 부등식 / 함수 / 좌표 / 유리식
+];
+const MAX_DX_QUESTIONS = 18;
 const CIRCLED = ['①','②','③','④','⑤'];
 
 // ─────────────────────────────────────────────────────────
