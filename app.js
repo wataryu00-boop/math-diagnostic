@@ -31,6 +31,7 @@ const state = {
     viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
     mastery: null,           // { [conceptId]: { correct_streak, total_seen, total_correct, ... } }
     masteryListFilter: null, // 'mastered' | 'developing' | 'weak' | 'untouched' | null
+    recomputeBusy: false,    // 재계산 중 여부
 };
 
 // 적응형 진단 파라미터
@@ -307,6 +308,12 @@ async function loadUserContext() {
         const mm = {};
         for (const m of (masteryRes.data || [])) mm[m.concept_id] = m;
         state.mastery = mm;
+
+        // 자동 복구: 진단 기록은 있는데 mastery가 비어있으면 sessions에서 재계산
+        if (state.sessionCount > 0 && Object.keys(state.mastery).length === 0) {
+            console.log('mastery 데이터가 비어있어 진단 기록에서 자동 복구합니다.');
+            await recomputeAndSaveMastery();
+        }
     }
 }
 
@@ -458,6 +465,89 @@ function shouldTestInBattery(conceptId) {
     const daysSince = (Date.now() - new Date(m.last_seen_at).getTime()) / (1000 * 60 * 60 * 24);
     if (daysSince > MASTERY_RECHECK_DAYS) return true;
     return Math.random() < MASTERY_RANDOM_RECHECK;
+}
+
+// 진단 세션 기록을 시간순으로 재생해서 현재 파라미터로 mastery를 새로 계산
+function rebuildMasteryFromSessions(sessions) {
+    if (!state.user) return {};
+    const m = {};
+    const sorted = [...sessions].sort((a, b) =>
+        new Date(a.finished_at).getTime() - new Date(b.finished_at).getTime()
+    );
+
+    for (const sess of sorted) {
+        for (const h of (sess.history || [])) {
+            const cid = h.conceptId;
+            if (!cid) continue;
+            if (!m[cid]) {
+                m[cid] = {
+                    user_id: state.user.id,
+                    concept_id: cid,
+                    correct_streak: 0,
+                    total_seen: 0,
+                    total_correct: 0,
+                    last_seen_at: null,
+                    last_correct_at: null,
+                    last_wrong_at: null,
+                };
+            }
+            const e = m[cid];
+            const prevStreak = e.correct_streak || 0;
+            const newStreak = h.correct
+                ? prevStreak + 1
+                : Math.max(0, prevStreak - STREAK_DECAY_ON_WRONG);
+            const time = sess.finished_at;
+            m[cid] = {
+                ...e,
+                total_seen: (e.total_seen || 0) + 1,
+                total_correct: (e.total_correct || 0) + (h.correct ? 1 : 0),
+                correct_streak: newStreak,
+                last_seen_at: time,
+                last_correct_at: h.correct ? time : e.last_correct_at,
+                last_wrong_at: h.correct ? e.last_wrong_at : time,
+            };
+        }
+    }
+    return m;
+}
+
+async function recomputeAndSaveMastery() {
+    if (!state.user) return false;
+    const { data: sessions, error } = await sb.from('sessions')
+        .select('id, finished_at, history')
+        .eq('user_id', state.user.id)
+        .order('finished_at', { ascending: true });
+    if (error) { console.warn('재계산 - sessions 로드 실패', error); return false; }
+    if (!sessions || sessions.length === 0) {
+        state.mastery = {};
+        return false;
+    }
+
+    const newMastery = rebuildMasteryFromSessions(sessions);
+    const rows = Object.values(newMastery);
+    if (rows.length === 0) { state.mastery = {}; return true; }
+
+    try {
+        await sb.from('concept_mastery').upsert(rows);
+    } catch (e) {
+        console.warn('재계산 - mastery 저장 실패', e);
+        return false;
+    }
+    state.mastery = newMastery;
+    return true;
+}
+
+async function manualRecompute() {
+    if (!state.user || state.recomputeBusy) return;
+    if (!confirm('지난 진단 기록을 모두 다시 분석해서 현재 상태를 갱신합니다. 계속하시겠습니까?')) return;
+    state.recomputeBusy = true;
+    state.masteryListFilter = null;
+    render();
+    const ok = await recomputeAndSaveMastery();
+    state.recomputeBusy = false;
+    render();
+    if (ok) alert('재계산 완료. 현재 상태가 갱신되었어요.');
+    else alert('재계산할 진단 기록이 없거나 오류가 있었어요.');
 }
 
 function toggleMasteryList(category) {
@@ -1210,6 +1300,13 @@ function renderWelcome() {
                 <button class="${recCid ? '' : 'primary'} block" onclick="startDiagnosis()">새 진단 시작하기</button>
             `}
             ${sessionCount > 0 ? `<button class="block" onclick="viewHistory()">📋 지난 기록 보기 (${sessionCount}회)</button>` : ''}
+            ${sessionCount > 0 ? `
+                <p class="admin-link-row">
+                    <a class="admin-link" onclick="manualRecompute()">
+                        ${state.recomputeBusy ? '재계산 중...' : '↻ 지난 진단 기록으로 현재 상태 다시 분석'}
+                    </a>
+                </p>
+            ` : ''}
             <p class="admin-link-row">
                 <a class="admin-link" onclick="showAdminPrompt()">관리자로 전환</a>
             </p>
