@@ -29,7 +29,13 @@ const state = {
     viewStudentId: null,     // when teacher drills into one student
     studyConceptId: null,    // 학생 - 개념 설명 페이지에서 보고 있는 개념
     viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
+    mastery: null,           // { [conceptId]: { correct_streak, total_seen, total_correct, ... } }
 };
+
+// 적응형 진단 파라미터
+const MASTERY_THRESHOLD = 3;          // 연속 정답 N회 = 마스터
+const MASTERY_RECHECK_DAYS = 14;      // 마스터 후 N일 지나면 재검증
+const MASTERY_RANDOM_RECHECK = 0.15;  // 마스터여도 무작위 재검증 확률
 
 const DIAGNOSTIC_BATTERY = ['F04', 'F05', 'I05', 'M06', 'P01', 'P07', 'E03'];
 const MAX_DX_QUESTIONS = 15;
@@ -282,23 +288,37 @@ async function loadUserContext() {
         state.inProgress = null;
         state.sessionCount = 0;
     } else {
-        const [ip, sc] = await Promise.all([
+        const [ip, sc, masteryRes] = await Promise.all([
             sb.from('in_progress').select('current_dx, current_practice').eq('user_id', state.user.id).maybeSingle(),
             sb.from('sessions').select('id', { count: 'exact', head: true }).eq('user_id', state.user.id),
+            sb.from('concept_mastery').select('*').eq('user_id', state.user.id),
         ]);
         state.inProgress = ip.data || { current_dx: null, current_practice: null };
         state.sessionCount = sc.count || 0;
         state.teacherData = null;
+
+        // mastery: { conceptId: row } 맵
+        const mm = {};
+        for (const m of (masteryRes.data || [])) mm[m.concept_id] = m;
+        state.mastery = mm;
     }
 }
 
 async function loadTeacherData() {
-    const [profilesResult, sessionsResult] = await Promise.all([
+    const [profilesResult, sessionsResult, masteryResult] = await Promise.all([
         sb.from('profiles').select('*'),
         sb.from('sessions').select('*').order('finished_at', { ascending: false }),
+        sb.from('concept_mastery').select('*'),
     ]);
     const allProfiles = profilesResult.data || [];
     const sessions = sessionsResult.data || [];
+
+    // 학생별 mastery 맵: { user_id: { concept_id: row } }
+    const masteryByUser = {};
+    for (const m of (masteryResult.data || [])) {
+        if (!masteryByUser[m.user_id]) masteryByUser[m.user_id] = {};
+        masteryByUser[m.user_id][m.concept_id] = m;
+    }
 
     const profileById = {};
     for (const p of allProfiles) profileById[p.id] = p;
@@ -344,6 +364,7 @@ async function loadTeacherData() {
         sessionsByUser,
         classWeak,
         totalSessions: sessions.length,
+        masteryByUser,
     };
 }
 
@@ -406,6 +427,75 @@ async function fetchPastSessions() {
 }
 
 // ─────────────────────────────────────────────────────────
+// 적응형 진단 — 개념 숙련도 (mastery)
+// ─────────────────────────────────────────────────────────
+
+function getMasteryStatus(m) {
+    if (!m || !m.total_seen) return 'unknown';
+    if (m.correct_streak >= MASTERY_THRESHOLD) return 'mastered';
+    if (m.correct_streak >= 1) return 'developing';
+    return 'weak';
+}
+
+function getMasteryLevel(m) {
+    const s = getMasteryStatus(m);
+    if (s === 'mastered') return 3;
+    if (s === 'weak') return 1;
+    return 2; // unknown / developing
+}
+
+function shouldTestInBattery(conceptId) {
+    const m = state.mastery?.[conceptId];
+    if (!m) return true;
+    if (getMasteryStatus(m) !== 'mastered') return true;
+    if (!m.last_seen_at) return true;
+    const daysSince = (Date.now() - new Date(m.last_seen_at).getTime()) / (1000 * 60 * 60 * 24);
+    if (daysSince > MASTERY_RECHECK_DAYS) return true;
+    return Math.random() < MASTERY_RANDOM_RECHECK;
+}
+
+async function updateMastery(conceptId, correct) {
+    if (!state.user || !conceptId) return;
+    state.mastery = state.mastery || {};
+
+    const existing = state.mastery[conceptId] || {
+        user_id: state.user.id,
+        concept_id: conceptId,
+        correct_streak: 0,
+        total_seen: 0,
+        total_correct: 0,
+        last_seen_at: null,
+        last_correct_at: null,
+        last_wrong_at: null,
+    };
+
+    const now = new Date().toISOString();
+    const updated = {
+        ...existing,
+        total_seen: (existing.total_seen || 0) + 1,
+        total_correct: (existing.total_correct || 0) + (correct ? 1 : 0),
+        correct_streak: correct ? (existing.correct_streak || 0) + 1 : 0,
+        last_seen_at: now,
+        last_correct_at: correct ? now : existing.last_correct_at,
+        last_wrong_at: correct ? existing.last_wrong_at : now,
+    };
+    state.mastery[conceptId] = updated;
+
+    try {
+        await sb.from('concept_mastery').upsert({
+            user_id: updated.user_id,
+            concept_id: updated.concept_id,
+            correct_streak: updated.correct_streak,
+            total_seen: updated.total_seen,
+            total_correct: updated.total_correct,
+            last_seen_at: updated.last_seen_at,
+            last_correct_at: updated.last_correct_at,
+            last_wrong_at: updated.last_wrong_at,
+        });
+    } catch (e) { console.warn('mastery save failed', e); }
+}
+
+// ─────────────────────────────────────────────────────────
 // 보기 만들기 & 셔플
 // ─────────────────────────────────────────────────────────
 
@@ -442,8 +532,14 @@ function pickProblem(conceptId, opts = {}) {
         .filter(p => !askedDx.has(p['문제ID']) && !askedPr.has(p['문제ID']));
     if (pool.length === 0) return null;
     if (opts.diagnostic) {
-        // 매번 다른 문제가 나오도록 풀에서 랜덤 선택
-        return pool[Math.floor(Math.random() * pool.length)];
+        const target = opts.targetLevel || 2;
+        // 1순위: 정확히 같은 난이도 중 랜덤
+        const exact = pool.filter(p => parseInt(p['난이도']) === target);
+        if (exact.length > 0) return exact[Math.floor(Math.random() * exact.length)];
+        // 2순위: ±1 이내
+        const close = pool.filter(p => Math.abs(parseInt(p['난이도']) - target) <= 1);
+        const candidates = close.length > 0 ? close : pool;
+        return candidates[Math.floor(Math.random() * candidates.length)];
     }
     pool.sort((a, b) => parseInt(a['난이도']) - parseInt(b['난이도']));
     return pool[0];
@@ -455,8 +551,16 @@ function pickProblem(conceptId, opts = {}) {
 
 function startDiagnosis() {
     state.mode = 'dx';
+
+    // Mastery 기반 배터리 필터: 마스터된 개념은 일단 건너뜀 (재검증 조건은 shouldTestInBattery에서)
+    let battery = DIAGNOSTIC_BATTERY.filter(shouldTestInBattery);
+    // 모두 마스터 → 무작위 4개 verification
+    if (battery.length === 0) {
+        battery = shuffle([...DIAGNOSTIC_BATTERY]).slice(0, 4);
+    }
+
     state.dx = {
-        queue: shuffle([...DIAGNOSTIC_BATTERY]),
+        queue: shuffle(battery),
         asked: new Set(),
         wrongConcepts: new Set(),
         history: [],
@@ -465,6 +569,7 @@ function startDiagnosis() {
         selectedIndex: null,
         showingFeedback: false,
         lastInferred: null,
+        skippedByMastery: DIAGNOSTIC_BATTERY.length - battery.length,
     };
     nextDxQuestion();
 }
@@ -483,7 +588,8 @@ function nextDxQuestion() {
         const conceptId = state.dx.queue.shift();
         const alreadyTested = state.dx.history.some(h => h.conceptId === conceptId);
         if (alreadyTested) continue;
-        const problem = pickProblem(conceptId, { diagnostic: true });
+        const targetLevel = getMasteryLevel(state.mastery?.[conceptId]);
+        const problem = pickProblem(conceptId, { diagnostic: true, targetLevel });
         if (problem) {
             state.dx.currentProblem = problem;
             state.dx.currentChoices = buildChoices(problem);
@@ -534,6 +640,8 @@ function submitDxAnswer() {
         inferred,
     });
 
+    updateMastery(problem['점검개념ID'], correct);
+
     saveDxToCloud();
     render();
 
@@ -572,6 +680,7 @@ function skipDxAnswer() {
         correct: false,
         inferred,
     });
+    updateMastery(problem['점검개념ID'], false);
     saveDxToCloud();
     render();
 }
@@ -650,6 +759,7 @@ function submitPracticeAnswer() {
     state.practice.showingFeedback = true;
     state.practice.totalCount++;
     if (chosen.isCorrect) state.practice.correctCount++;
+    updateMastery(state.practice.currentProblem?.['점검개념ID'], chosen.isCorrect);
     savePracticeToCloud();
     render();
 
@@ -824,12 +934,30 @@ function renderWelcome() {
     const inProgressKind = ip.current_practice ? '학습' : (ip.current_dx ? '진단' : null);
     const sessionCount = state.sessionCount || 0;
 
+    // Mastery 요약
+    const mastery = state.mastery || {};
+    let mastered = 0, developing = 0, weak = 0;
+    for (const cid of Object.keys(mastery)) {
+        const status = getMasteryStatus(mastery[cid]);
+        if (status === 'mastered') mastered++;
+        else if (status === 'developing') developing++;
+        else if (status === 'weak') weak++;
+    }
+    const totalTracked = mastered + developing + weak;
+
     return `
         <div class="card">
             <div class="header-row">
                 <h1>📘 ${escapeHTML(getDisplayName())}님</h1>
                 <button class="link-btn" onclick="doLogout()">로그아웃</button>
             </div>
+            ${totalTracked > 0 ? `
+                <div class="mastery-summary">
+                    <div class="m-stat m-mastered"><b>${mastered}</b><span>🌟 마스터</span></div>
+                    <div class="m-stat m-developing"><b>${developing}</b><span>📈 학습 중</span></div>
+                    <div class="m-stat m-weak"><b>${weak}</b><span>⚠️ 약점</span></div>
+                </div>
+            ` : ''}
             ${inProgressKind ? `
                 <div class="resume-banner">진행 중인 ${inProgressKind}이 있어요.</div>
                 <button class="primary block" onclick="resumeProgress()">▶ 이어풀기</button>
@@ -1252,6 +1380,14 @@ function renderTeacherStudent() {
     }
     const weakSorted = Object.entries(weakFreq).sort((a, b) => b[1] - a[1]);
 
+    // 학생 mastery 정보
+    const sm = td.masteryByUser?.[sid] || {};
+    const masteryByStatus = { mastered: [], developing: [], weak: [], unknown: [] };
+    for (const cid of Object.keys(sm)) {
+        const status = getMasteryStatus(sm[cid]);
+        masteryByStatus[status].push({ cid, m: sm[cid] });
+    }
+
     return `
         <div class="card">
             <div class="header-row">
@@ -1264,6 +1400,33 @@ function renderTeacherStudent() {
                     ? Math.round(studentSessions.reduce((sum, s) => sum + s.score, 0) / studentSessions.reduce((sum, s) => sum + s.total, 0) * 100) + '%'
                     : '—'}
             </p>
+
+            ${(masteryByStatus.mastered.length + masteryByStatus.developing.length + masteryByStatus.weak.length) > 0 ? `
+                <div class="mastery-summary">
+                    <div class="m-stat m-mastered"><b>${masteryByStatus.mastered.length}</b><span>🌟 마스터</span></div>
+                    <div class="m-stat m-developing"><b>${masteryByStatus.developing.length}</b><span>📈 학습 중</span></div>
+                    <div class="m-stat m-weak"><b>${masteryByStatus.weak.length}</b><span>⚠️ 약점</span></div>
+                </div>
+                <h3>개념별 숙련도</h3>
+                ${['mastered','developing','weak'].map(status => {
+                    const list = masteryByStatus[status];
+                    if (!list.length) return '';
+                    const label = { mastered: '🌟 마스터', developing: '📈 학습 중', weak: '⚠️ 약점' }[status];
+                    return `<details ${status === 'weak' ? 'open' : ''}>
+                        <summary><b>${label} (${list.length})</b></summary>
+                        <ul class="weakness-list">
+                            ${list.map(({cid, m}) => {
+                                const c = state.conceptsById[cid];
+                                const name = c ? c['개념명'] : cid;
+                                return `<li>
+                                    <b>${escapeHTML(name)}</b>
+                                    <span class="meta">${cid} · ${m.total_correct}/${m.total_seen} 정답 · 연속 ${m.correct_streak}회</span>
+                                </li>`;
+                            }).join('')}
+                        </ul>
+                    </details>`;
+                }).join('')}
+            ` : ''}
 
             ${weakSorted.length === 0 ? '<p>아직 진단 데이터가 없어요.</p>' : `
                 <h3>누적 약점 (자주 틀린 순)</h3>
