@@ -280,6 +280,83 @@ button.link-btn {
     font-size: 15px;
 }
 
+.why-wrong {
+    background: #fef2f2;
+    border-left: 3px solid #b3261e;
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin: 12px 0;
+    color: #7c1a14;
+    font-size: 15px;
+    line-height: 1.5;
+}
+
+.why-wrong-mini {
+    background: #fff5f5;
+    border-left: 2px solid #b3261e;
+    padding: 6px 10px;
+    margin: 6px 0;
+    color: #7c1a14;
+    font-size: 13px;
+    border-radius: 4px;
+}
+
+/* 정답 시 강조 + 자동 진행 안내 */
+.correct-flash {
+    font-size: 22px;
+    text-align: center;
+    padding: 18px;
+    animation: pop-in 0.25s ease-out;
+}
+@keyframes pop-in {
+    from { transform: scale(0.9); opacity: 0; }
+    to { transform: scale(1); opacity: 1; }
+}
+.auto-advance {
+    text-align: center;
+    color: #888;
+    font-size: 13px;
+    margin: 8px 0 4px;
+    animation: pulse 1s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { opacity: 0.5; }
+    50% { opacity: 1; }
+}
+
+/* 개념 설명 페이지 — 예시 박스 */
+.example-box {
+    background: #f8f9fb;
+    border-left: 3px solid #4a7eff;
+    padding: 14px 16px;
+    border-radius: 8px;
+    margin: 10px 0;
+    line-height: 1.7;
+    font-size: 16px;
+}
+
+/* 선생님 - 문제 은행 카드 */
+.problem-card {
+    background: #f8f9fb;
+    border-radius: 10px;
+    padding: 16px;
+    margin: 14px 0;
+}
+
+.problem-card .problem {
+    background: #fff;
+    margin: 8px 0;
+}
+
+.distractor {
+    background: #fff;
+    border-left: 2px solid #d0d4dc;
+    padding: 8px 12px;
+    border-radius: 6px;
+    margin: 6px 0;
+    font-size: 14px;
+}
+
 .inferred {
     background: #eef2ff;
     padding: 12px 16px;

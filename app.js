@@ -27,6 +27,8 @@ const state = {
     viewSession: null,
     teacherData: null,       // { students, sessions, classWeak } for teacher dashboard
     viewStudentId: null,     // when teacher drills into one student
+    studyConceptId: null,    // 학생 - 개념 설명 페이지에서 보고 있는 개념
+    viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
 };
 
 const DIAGNOSTIC_BATTERY = ['F04', 'F05', 'I05', 'M06', 'P01', 'P07', 'E03'];
@@ -418,11 +420,11 @@ function shuffle(arr) {
 
 function buildChoices(problem) {
     const raw = [
-        { text: problem['정답'], weakness: '', isCorrect: true },
-        { text: problem['오답1'], weakness: problem['약점1'], isCorrect: false },
-        { text: problem['오답2'], weakness: problem['약점2'], isCorrect: false },
-        { text: problem['오답3'], weakness: problem['약점3'], isCorrect: false },
-        { text: problem['오답4'], weakness: problem['약점4'], isCorrect: false },
+        { text: problem['정답'], weakness: '', explanation: '', isCorrect: true },
+        { text: problem['오답1'], weakness: problem['약점1'], explanation: problem['오답해설1'] || '', isCorrect: false },
+        { text: problem['오답2'], weakness: problem['약점2'], explanation: problem['오답해설2'] || '', isCorrect: false },
+        { text: problem['오답3'], weakness: problem['약점3'], explanation: problem['오답해설3'] || '', isCorrect: false },
+        { text: problem['오답4'], weakness: problem['약점4'], explanation: problem['오답해설4'] || '', isCorrect: false },
     ].filter(c => c.text);
     return shuffle(raw);
 }
@@ -526,6 +528,7 @@ function submitDxAnswer() {
         conceptId: problem['점검개념ID'],
         question: problem['문제'],
         chosenText: chosen.text,
+        chosenExplanation: chosen.explanation || '',
         correctAnswer: problem['정답'],
         correct,
         inferred,
@@ -533,6 +536,17 @@ function submitDxAnswer() {
 
     saveDxToCloud();
     render();
+
+    // 정답이면 1초 후 자동으로 다음 문제
+    if (correct) {
+        const snapshotProblemId = problem['문제ID'];
+        setTimeout(() => {
+            if (state.mode === 'dx' && state.dx?.showingFeedback
+                && state.dx.currentProblem?.['문제ID'] === snapshotProblemId) {
+                nextDxQuestion();
+            }
+        }, 1000);
+    }
 }
 
 function skipDxAnswer() {
@@ -553,6 +567,7 @@ function skipDxAnswer() {
         conceptId: problem['점검개념ID'],
         question: problem['문제'],
         chosenText: '(모름)',
+        chosenExplanation: '',
         correctAnswer: problem['정답'],
         correct: false,
         inferred,
@@ -579,8 +594,20 @@ function findRootWeaknesses() {
 }
 
 // ─────────────────────────────────────────────────────────
-// 학습(연습) 흐름
+// 개념 설명 페이지 → 학습(연습) 흐름
 // ─────────────────────────────────────────────────────────
+
+function studyConcept(conceptId) {
+    state.studyConceptId = conceptId;
+    state.mode = 'conceptStudy';
+    render();
+}
+
+function startPracticeFromStudy() {
+    if (state.studyConceptId) {
+        startPractice(state.studyConceptId);
+    }
+}
 
 function startPractice(conceptId) {
     state.mode = 'practice';
@@ -625,6 +652,17 @@ function submitPracticeAnswer() {
     if (chosen.isCorrect) state.practice.correctCount++;
     savePracticeToCloud();
     render();
+
+    // 정답이면 1초 후 자동으로 다음 문제
+    if (chosen.isCorrect) {
+        const snapshotProblemId = state.practice.currentProblem?.['문제ID'];
+        setTimeout(() => {
+            if (state.mode === 'practice' && state.practice?.showingFeedback
+                && state.practice.currentProblem?.['문제ID'] === snapshotProblemId) {
+                nextPracticeQuestion();
+            }
+        }, 1000);
+    }
 }
 
 function backToResult() {
@@ -717,12 +755,15 @@ function render() {
     else if (state.profile?.role === 'teacher') {
         if (state.mode === 'teacherStudent') root.innerHTML = renderTeacherStudent();
         else if (state.mode === 'pastResult') root.innerHTML = renderPastResult();
+        else if (state.mode === 'teacherProblems') root.innerHTML = renderTeacherProblems();
+        else if (state.mode === 'teacherConceptProblems') root.innerHTML = renderTeacherConceptProblems();
         else root.innerHTML = renderTeacherDashboard();
     }
     else if (state.mode === 'admin') root.innerHTML = renderAdminPrompt();
     else if (state.mode === 'welcome') root.innerHTML = renderWelcome();
     else if (state.mode === 'dx') root.innerHTML = renderDx();
     else if (state.mode === 'result') root.innerHTML = renderResult();
+    else if (state.mode === 'conceptStudy') root.innerHTML = renderConceptStudy();
     else if (state.mode === 'practice') root.innerHTML = renderPractice();
     else if (state.mode === 'history') root.innerHTML = renderHistory();
     else if (state.mode === 'pastResult') root.innerHTML = renderPastResult();
@@ -847,18 +888,33 @@ function renderDx() {
     } else {
         const inferred = dx.lastInferred;
         const inferredConcept = inferred ? state.conceptsById[inferred] : null;
-        const isCorrect = dx.selectedIndex !== null && dx.currentChoices[dx.selectedIndex].isCorrect;
+        const chosen = dx.selectedIndex !== null ? dx.currentChoices[dx.selectedIndex] : null;
+        const isCorrect = chosen?.isCorrect;
+
+        if (isCorrect) {
+            return `
+                <div class="card">
+                    <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
+                    <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검</div>
+                    <div class="problem">${formatMath(p['문제'])}</div>
+                    ${renderChoices(dx.currentChoices, dx.selectedIndex, true, 'selectDxChoice')}
+                    <div class="correct correct-flash">✓ 정답입니다!</div>
+                    <div class="auto-advance">잠시 후 다음 문제로 넘어갑니다...</div>
+                </div>
+            `;
+        }
         return `
             <div class="card">
                 <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
                 <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검</div>
                 <div class="problem">${formatMath(p['문제'])}</div>
                 ${renderChoices(dx.currentChoices, dx.selectedIndex, true, 'selectDxChoice')}
-                ${isCorrect
-                    ? `<div class="correct">✓ 정답입니다</div>`
-                    : `<div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>`}
+                <div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>
+                ${chosen?.explanation
+                    ? `<div class="why-wrong">⚠️ 이 답이 틀린 이유: ${formatMath(chosen.explanation)}</div>`
+                    : ''}
                 <div class="solution">💡 ${formatMath(p['해설'])}</div>
-                ${!isCorrect && inferredConcept
+                ${inferredConcept
                     ? `<div class="inferred">→ 짚이는 약점: <b>${escapeHTML(inferredConcept['개념명'])}</b> <span class="meta">(${inferred})</span></div>`
                     : ''}
                 <button class="primary block" onclick="nextDxQuestion()">다음 문제</button>
@@ -905,11 +961,11 @@ function renderResult() {
                 </ul>
 
                 <h3>🌱 추천 시작 개념</h3>
-                <p>아래 개념부터 학습하시면 위쪽 약점들이 함께 풀려요.</p>
+                <p>아래 개념부터 학습하시면 위쪽 약점들이 함께 풀려요. 개념 설명을 먼저 보고 문제를 풀 수 있어요.</p>
                 ${roots.map(cid => {
                     const c = state.conceptsById[cid];
                     if (!c) return '';
-                    return `<button class="primary block" onclick="startPractice('${cid}')">▶ ${escapeHTML(c['개념명'])} 학습하기</button>`;
+                    return `<button class="primary block" onclick="studyConcept('${cid}')">📖 ${escapeHTML(c['개념명'])} 개념 보기</button>`;
                 }).join('')}
             `}
 
@@ -931,9 +987,12 @@ function renderHistorySection(history) {
                 return `<div class="history-item ${h.correct ? 'correct' : 'wrong'}">
                     <b>${h.correct ? '✓' : '✗'}</b>
                     [${h.problemId}] ${formatMath(h.question)}
-                    → 내 선택: <b>${formatMath(h.chosenText)}</b>
+                    → 선택: <b>${formatMath(h.chosenText)}</b>
                     ${!h.correct ? `· 정답: <b>${formatMath(h.correctAnswer)}</b>` : ''}
-                    <br><span class="meta">점검: ${escapeHTML(cName)}${h.inferred && h.inferred !== h.conceptId ? ` · 짚이는 약점: ${escapeHTML(state.conceptsById[h.inferred]?.['개념명'] || h.inferred)}` : ''}</span>
+                    ${!h.correct && h.chosenExplanation
+                        ? `<div class="why-wrong-mini">⚠️ ${formatMath(h.chosenExplanation)}</div>`
+                        : ''}
+                    <span class="meta">점검: ${escapeHTML(cName)}${h.inferred && h.inferred !== h.conceptId ? ` · 짚이는 약점: ${escapeHTML(state.conceptsById[h.inferred]?.['개념명'] || h.inferred)}` : ''}</span>
                 </div>`;
             }).join('')}
         </div>
@@ -970,14 +1029,27 @@ function renderPractice() {
             </div>
         `;
     } else {
+        const chosen = pr.selectedIndex !== null ? pr.currentChoices[pr.selectedIndex] : null;
+        if (isCorrect) {
+            return `
+                <div class="card">
+                    <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])}</div>
+                    <div class="problem">${formatMath(p['문제'])}</div>
+                    ${renderChoices(pr.currentChoices, pr.selectedIndex, true, 'selectPracticeChoice')}
+                    <div class="correct correct-flash">✓ 정답입니다!</div>
+                    <div class="auto-advance">잠시 후 다음 문제로 넘어갑니다...</div>
+                </div>
+            `;
+        }
         return `
             <div class="card">
                 <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])}</div>
                 <div class="problem">${formatMath(p['문제'])}</div>
                 ${renderChoices(pr.currentChoices, pr.selectedIndex, true, 'selectPracticeChoice')}
-                ${isCorrect
-                    ? `<div class="correct">✓ 정답입니다</div>`
-                    : `<div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>`}
+                <div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>
+                ${chosen?.explanation
+                    ? `<div class="why-wrong">⚠️ 이 답이 틀린 이유: ${formatMath(chosen.explanation)}</div>`
+                    : ''}
                 <div class="solution">💡 ${formatMath(p['해설'])}</div>
                 <button class="primary block" onclick="nextPracticeQuestion()">다음 문제</button>
                 <button class="block" onclick="backToResult()">결과로 돌아가기</button>
@@ -1125,6 +1197,8 @@ function renderTeacherDashboard() {
 
             <button class="link-btn" onclick="refreshTeacherData()" style="float:right;margin-top:-8px">↻ 새로고침</button>
 
+            <button class="block" onclick="viewProblemBank()" style="margin-top:8px">📚 문제 은행 둘러보기</button>
+
             <h3>🔥 우리반 자주 막히는 개념 (학생 수 기준)</h3>
             ${top.length === 0
                 ? '<p class="meta">아직 진단 데이터가 없어요.</p>'
@@ -1213,7 +1287,175 @@ function renderTeacherStudent() {
                         </li>
                     `).join('')}
                 </ul>
+
+                ${(() => {
+                    const allItems = studentSessions.flatMap(s =>
+                        (s.history || []).map(h => ({ ...h, sessionDate: s.finished_at }))
+                    );
+                    const allWrong = allItems.filter(h => !h.correct);
+                    const allCorrect = allItems.filter(h => h.correct);
+
+                    const renderItem = (h, isWrong) => {
+                        const c = state.conceptsById[h.conceptId];
+                        const cName = c ? c['개념명'] : h.conceptId;
+                        return `<div class="history-item ${isWrong ? 'wrong' : 'correct'}">
+                            <span class="meta">${formatDate(h.sessionDate)} · ${escapeHTML(cName)}</span><br>
+                            [${h.problemId}] ${formatMath(h.question)}
+                            <br>→ 선택: <b>${formatMath(h.chosenText)}</b>
+                            ${isWrong ? `· 정답: <b>${formatMath(h.correctAnswer)}</b>` : ''}
+                            ${isWrong && h.chosenExplanation
+                                ? `<div class="why-wrong-mini">⚠️ ${formatMath(h.chosenExplanation)}</div>`
+                                : ''}
+                        </div>`;
+                    };
+
+                    let result = '';
+                    if (allWrong.length > 0) {
+                        result += `
+                            <h3>📝 전체 오답 (${allWrong.length}개)</h3>
+                            <div class="history">${allWrong.map(h => renderItem(h, true)).join('')}</div>
+                        `;
+                    }
+                    if (allCorrect.length > 0) {
+                        result += `
+                            <h3>✓ 전체 정답 (${allCorrect.length}개)</h3>
+                            <div class="history">${allCorrect.map(h => renderItem(h, false)).join('')}</div>
+                        `;
+                    }
+                    return result;
+                })()}
             `}
+        </div>
+    `;
+}
+
+// ─────────────────────────────────────────────────────────
+// 개념 설명 페이지 (학생용)
+// ─────────────────────────────────────────────────────────
+
+function renderConceptStudy() {
+    const cid = state.studyConceptId;
+    const c = state.conceptsById[cid];
+    if (!c) return '<div class="card"><p>개념을 찾을 수 없어요.</p><button onclick="restart()">처음으로</button></div>';
+
+    const example = c['예시'] || '';
+    const description = c['개념설명'] || c['한줄설명'] || '';
+
+    return `
+        <div class="card">
+            <div class="header-row">
+                <h2>📖 ${escapeHTML(c['개념명'])}</h2>
+                <button class="link-btn" onclick="state.mode='result'; render();">← 결과</button>
+            </div>
+            <p class="meta">${escapeHTML(c['영역'])} · ${escapeHTML(c['학년단계'])} · ${cid}</p>
+
+            <h3>한줄 요약</h3>
+            <p>${formatMath(c['한줄설명'] || '')}</p>
+
+            <h3>설명</h3>
+            <p style="line-height:1.7">${formatMath(description)}</p>
+
+            ${example ? `
+                <h3>예시</h3>
+                <div class="example-box">${formatMath(example)}</div>
+            ` : ''}
+
+            <button class="primary block" style="margin-top:24px" onclick="startPracticeFromStudy()">▶ 개념 확인 문제 풀기</button>
+            <button class="block" onclick="state.mode='result'; render();">결과로 돌아가기</button>
+        </div>
+    `;
+}
+
+// ─────────────────────────────────────────────────────────
+// 선생님 - 문제 은행 둘러보기
+// ─────────────────────────────────────────────────────────
+
+function viewProblemBank() {
+    state.mode = 'teacherProblems';
+    state.viewConceptId = null;
+    render();
+}
+
+function viewConceptProblems(conceptId) {
+    state.viewConceptId = conceptId;
+    state.mode = 'teacherConceptProblems';
+    render();
+}
+
+function renderTeacherProblems() {
+    const concepts = state.concepts;
+    // 영역별로 그룹화
+    const byArea = {};
+    for (const c of concepts) {
+        const area = c['영역'] || '기타';
+        if (!byArea[area]) byArea[area] = [];
+        byArea[area].push(c);
+    }
+
+    return `
+        <div class="card">
+            <div class="header-row">
+                <h2>📚 문제 은행</h2>
+                <button class="link-btn" onclick="backToTeacherDashboard()">← 대시보드</button>
+            </div>
+            <p class="meta">개념을 클릭하면 그 개념의 모든 문제(매력 오답 포함)를 볼 수 있어요</p>
+
+            ${Object.entries(byArea).map(([area, list]) => `
+                <h3>${escapeHTML(area)} (${list.length})</h3>
+                <ul class="weakness-list">
+                    ${list.map(c => {
+                        const count = (state.problemsByConceptId[c['개념ID']] || []).length;
+                        return `<li class="student-row" onclick="viewConceptProblems('${c['개념ID']}')">
+                            <b>${c['개념ID']} ${escapeHTML(c['개념명'])}</b>
+                            <span class="meta">· 문제 ${count}개 · ${escapeHTML(c['학년단계'])}</span>
+                        </li>`;
+                    }).join('')}
+                </ul>
+            `).join('')}
+        </div>
+    `;
+}
+
+function renderTeacherConceptProblems() {
+    const cid = state.viewConceptId;
+    const c = state.conceptsById[cid];
+    if (!c) return '<div class="card"><p>개념 정보 없음.</p><button onclick="viewProblemBank()">목록으로</button></div>';
+    const problems = state.problemsByConceptId[cid] || [];
+
+    return `
+        <div class="card">
+            <div class="header-row">
+                <h2>📚 ${escapeHTML(c['개념명'])}</h2>
+                <button class="link-btn" onclick="viewProblemBank()">← 문제 은행</button>
+            </div>
+            <p class="meta">${cid} · ${escapeHTML(c['영역'])} · ${escapeHTML(c['학년단계'])} · 문제 ${problems.length}개</p>
+            <div class="solution" style="margin-bottom:20px">
+                <b>개념 설명:</b> ${formatMath(c['개념설명'] || c['한줄설명'] || '')}
+                ${c['예시'] ? `<br><br><b>예시:</b> ${formatMath(c['예시'])}` : ''}
+            </div>
+
+            ${problems.map((p, idx) => `
+                <div class="problem-card">
+                    <div class="meta">[${p['문제ID']}] 난이도 ${p['난이도']} · ${escapeHTML(p['용도'])} · ${escapeHTML(p['유형'] || '')}</div>
+                    <div class="problem">${formatMath(p['문제'])}</div>
+                    <div class="correct" style="margin:8px 0">정답: <b>${formatMath(p['정답'])}</b></div>
+                    <div class="solution">💡 ${formatMath(p['해설'])}</div>
+
+                    <h4 style="margin:14px 0 6px;font-size:14px;color:#666">매력 오답</h4>
+                    ${[1,2,3,4].map(i => {
+                        const wrongText = p[`오답${i}`];
+                        const weak = p[`약점${i}`];
+                        const explain = p[`오답해설${i}`];
+                        if (!wrongText) return '';
+                        const weakName = weak ? (state.conceptsById[weak]?.['개념명'] || weak) : '';
+                        return `<div class="distractor">
+                            <b>${formatMath(wrongText)}</b>
+                            ${weakName ? `<span class="meta"> → ${escapeHTML(weakName)} (${weak})</span>` : ''}
+                            ${explain ? `<div class="why-wrong-mini">${formatMath(explain)}</div>` : ''}
+                        </div>`;
+                    }).join('')}
+                </div>
+            `).join('')}
         </div>
     `;
 }
