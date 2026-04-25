@@ -295,13 +295,15 @@ async function loadUserContext() {
         state.inProgress = null;
         state.sessionCount = 0;
     } else {
-        const [ip, sc, masteryRes] = await Promise.all([
+        const [ip, allSessions, masteryRes] = await Promise.all([
             sb.from('in_progress').select('current_dx, current_practice').eq('user_id', state.user.id).maybeSingle(),
-            sb.from('sessions').select('id', { count: 'exact', head: true }).eq('user_id', state.user.id),
+            sb.from('sessions').select('id, kind').eq('user_id', state.user.id),
             sb.from('concept_mastery').select('*').eq('user_id', state.user.id),
         ]);
         state.inProgress = ip.data || { current_dx: null, current_practice: null };
-        state.sessionCount = sc.count || 0;
+        const sessList = allSessions.data || [];
+        state.sessionCount = sessList.filter(s => s.kind !== 'practice').length;
+        state.practiceCount = sessList.filter(s => s.kind === 'practice').length;
         state.teacherData = null;
 
         // mastery: { conceptId: row } 맵
@@ -1005,6 +1007,9 @@ function startPractice(conceptId) {
         showingFeedback: false,
         correctCount: 0,
         totalCount: 0,
+        history: [],                              // 풀이 기록 누적
+        startedAt: new Date().toISOString(),
+        savedToSessions: false,                   // 중복 저장 방지
     };
     nextPracticeQuestion();
 }
@@ -1029,10 +1034,24 @@ function selectPracticeChoice(idx) {
 function submitPracticeAnswer() {
     if (state.practice.selectedIndex === null) return;
     const chosen = state.practice.currentChoices[state.practice.selectedIndex];
+    const problem = state.practice.currentProblem;
     state.practice.showingFeedback = true;
     state.practice.totalCount++;
     if (chosen.isCorrect) state.practice.correctCount++;
-    updateMastery(state.practice.currentProblem?.['점검개념ID'], chosen.isCorrect);
+
+    // 학습 풀이 기록도 누적
+    state.practice.history.push({
+        problemId: problem['문제ID'],
+        conceptId: problem['점검개념ID'],
+        question: problem['문제'],
+        chosenText: chosen.text,
+        chosenExplanation: chosen.explanation || '',
+        correctAnswer: problem['정답'],
+        correct: chosen.isCorrect,
+        inferred: chosen.isCorrect ? null : (chosen.weakness || problem['점검개념ID']),
+    });
+
+    updateMastery(problem?.['점검개념ID'], chosen.isCorrect);
     savePracticeToCloud();
     render();
 
@@ -1048,7 +1067,32 @@ function submitPracticeAnswer() {
     }
 }
 
-function backToResult() {
+async function savePracticeSession() {
+    if (!state.user || !state.practice) return;
+    const pr = state.practice;
+    if (pr.savedToSessions) return;
+    if (!pr.history?.length) return;
+    pr.savedToSessions = true;
+    try {
+        await sb.from('sessions').insert({
+            user_id: state.user.id,
+            kind: 'practice',
+            concept_id: pr.conceptId,
+            finished_at: new Date().toISOString(),
+            score: pr.correctCount,
+            total: pr.totalCount,
+            weak_concepts: [],
+            root_concepts: [],
+            history: pr.history,
+        });
+        state.practiceCount = (state.practiceCount || 0) + 1;
+    } catch (e) {
+        console.warn('학습 세션 저장 실패', e);
+    }
+}
+
+async function backToResult() {
+    await savePracticeSession();
     state.practice = null;
     savePracticeToCloud();
     state.mode = state.dx ? 'result' : 'welcome';
@@ -1309,7 +1353,7 @@ function renderWelcome() {
             ` : `
                 <button class="${recCid ? '' : 'primary'} block" onclick="startDiagnosis()">새 진단 시작하기</button>
             `}
-            ${sessionCount > 0 ? `<button class="block" onclick="viewHistory()">📋 지난 기록 보기 (${sessionCount}회)</button>` : ''}
+            ${(sessionCount > 0 || (state.practiceCount || 0) > 0) ? `<button class="block" onclick="viewHistory()">📋 지난 기록 보기 (진단 ${sessionCount}회 · 학습 ${state.practiceCount || 0}회)</button>` : ''}
             ${sessionCount > 0 ? `
                 <p class="admin-link-row">
                     <a class="admin-link" onclick="manualRecompute()">
@@ -1581,16 +1625,24 @@ function renderHistory() {
             </div>
         `;
     }
+    const diagCount = list.filter(s => s.kind !== 'practice').length;
+    const prCount = list.filter(s => s.kind === 'practice').length;
     return `
         <div class="card">
-            <h2>📋 지난 기록 (${list.length}회)</h2>
+            <h2>📋 지난 기록</h2>
+            <p class="meta">진단 ${diagCount}회 · 학습 ${prCount}회</p>
             <ul class="weakness-list">
-                ${list.map(sess => `
-                    <li onclick="viewPastSession(${sess.id})" style="cursor:pointer">
+                ${list.map(sess => {
+                    const isPractice = sess.kind === 'practice';
+                    const conceptName = isPractice && sess.concept_id
+                        ? (state.conceptsById[sess.concept_id]?.['개념명'] || sess.concept_id)
+                        : null;
+                    const label = isPractice ? `📚 학습: ${escapeHTML(conceptName || '')}` : '📊 진단';
+                    return `<li onclick="viewPastSession(${sess.id})" style="cursor:pointer">
                         <b>${formatDate(sess.finished_at)}</b>
-                        <span class="meta"> · 점수 ${sess.score}/${sess.total} · 약점 ${(sess.weak_concepts || []).length}개</span>
-                    </li>
-                `).join('')}
+                        <span class="meta"> · ${label} · 점수 ${sess.score}/${sess.total}${isPractice ? '' : ' · 약점 ' + (sess.weak_concepts || []).length + '개'}</span>
+                    </li>`;
+                }).join('')}
             </ul>
             <button class="block" onclick="restart()">처음으로</button>
         </div>
@@ -1612,6 +1664,7 @@ function renderPastResult() {
     const sess = state.viewSession;
     if (!sess) return '<div class="card"><p>세션을 찾을 수 없어요.</p><button onclick="backFromPastResult()">목록으로</button></div>';
     const isTeacher = state.profile?.role === 'teacher';
+    const isPractice = sess.kind === 'practice';
     const weak = sess.weak_concepts || [];
     const roots = sess.root_concepts || [];
     let studentLabel = '';
@@ -1619,12 +1672,16 @@ function renderPastResult() {
         const stu = state.teacherData.students.find(s => s.id === state.viewStudentId);
         if (stu) studentLabel = `<p class="meta">${escapeHTML(stu.username)} 학생</p>`;
     }
+    const conceptName = isPractice && sess.concept_id
+        ? (state.conceptsById[sess.concept_id]?.['개념명'] || sess.concept_id)
+        : null;
     return `
         <div class="card">
-            <h2>📊 ${formatDate(sess.finished_at)} 진단</h2>
+            <h2>${isPractice ? '📚' : '📊'} ${formatDate(sess.finished_at)} ${isPractice ? '학습' : '진단'}</h2>
             ${studentLabel}
+            ${isPractice && conceptName ? `<p class="meta">개념: ${escapeHTML(conceptName)}</p>` : ''}
             <p>점수: <b>${sess.score} / ${sess.total}</b></p>
-            ${weak.length === 0 ? '<p>큰 약점이 없었어요.</p>' : `
+            ${!isPractice && weak.length > 0 ? `
                 <h3>약점 개념 (${weak.length}개)</h3>
                 <ul class="weakness-list">
                     ${weak.map(cid => {
@@ -1637,7 +1694,8 @@ function renderPastResult() {
                         </li>`;
                     }).join('')}
                 </ul>
-            `}
+            ` : ''}
+            ${!isPractice && weak.length === 0 ? '<p>큰 약점이 없었어요.</p>' : ''}
             ${renderHistorySection(sess.history || [])}
             <p style="margin-top:24px">
                 ${isTeacher
@@ -1775,12 +1833,14 @@ function renderTeacherStudent() {
                 <h2>👤 ${escapeHTML(student.username)} 학생</h2>
                 <button class="link-btn" onclick="backToTeacherDashboard()">← 대시보드</button>
             </div>
-            <p class="meta">
-                진단 ${student.sessionCount}회 ·
-                평균 점수 ${studentSessions.length > 0
-                    ? Math.round(studentSessions.reduce((sum, s) => sum + s.score, 0) / studentSessions.reduce((sum, s) => sum + s.total, 0) * 100) + '%'
-                    : '—'}
-            </p>
+            ${(() => {
+                const dxList = studentSessions.filter(s => s.kind !== 'practice');
+                const prList = studentSessions.filter(s => s.kind === 'practice');
+                const totalSeen = studentSessions.reduce((sum, s) => sum + s.total, 0);
+                const totalCorrect = studentSessions.reduce((sum, s) => sum + s.score, 0);
+                const avg = totalSeen > 0 ? Math.round(totalCorrect / totalSeen * 100) + '%' : '—';
+                return `<p class="meta">진단 ${dxList.length}회 · 학습 ${prList.length}회 · 평균 정답률 ${avg}</p>`;
+            })()}
 
             ${(masteryByStatus.mastered.length + masteryByStatus.developing.length + masteryByStatus.weak.length) > 0 ? `
                 <div class="mastery-summary">
@@ -1822,14 +1882,19 @@ function renderTeacherStudent() {
                     }).join('')}
                 </ul>
 
-                <h3>진단 이력</h3>
+                <h3>풀이 이력 (진단 + 학습)</h3>
                 <ul class="weakness-list">
-                    ${studentSessions.map(s => `
-                        <li class="student-row" onclick="viewStudentSession(${s.id})">
+                    ${studentSessions.map(s => {
+                        const isPr = s.kind === 'practice';
+                        const cName = isPr && s.concept_id
+                            ? (state.conceptsById[s.concept_id]?.['개념명'] || s.concept_id)
+                            : null;
+                        const tag = isPr ? `📚 학습: ${escapeHTML(cName || '')}` : '📊 진단';
+                        return `<li class="student-row" onclick="viewStudentSession(${s.id})">
                             <b>${formatDate(s.finished_at)}</b>
-                            <span class="meta"> · 점수 ${s.score}/${s.total} · 약점 ${(s.weak_concepts || []).length}개</span>
-                        </li>
-                    `).join('')}
+                            <span class="meta"> · ${tag} · 점수 ${s.score}/${s.total}${isPr ? '' : ' · 약점 ' + (s.weak_concepts || []).length + '개'}</span>
+                        </li>`;
+                    }).join('')}
                 </ul>
 
                 ${(() => {
