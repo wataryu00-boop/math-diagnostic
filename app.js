@@ -13,8 +13,9 @@ const state = {
     conceptsById: {},
     problems: [],
     problemsByConceptId: {},
-    mode: 'welcome',         // welcome | dx | result | practice | history | pastResult
+    mode: 'welcome',         // welcome | dx | result | practice | history | pastResult | teacherStudent
     user: null,              // Supabase user object
+    profile: null,           // { id, username, role }
     authMode: 'login',       // login | signup
     authError: null,
     authBusy: false,
@@ -24,6 +25,8 @@ const state = {
     dx: null,
     practice: null,
     viewSession: null,
+    teacherData: null,       // { students, sessions, classWeak } for teacher dashboard
+    viewStudentId: null,     // when teacher drills into one student
 };
 
 const DIAGNOSTIC_BATTERY = ['F04', 'F05', 'I05', 'M06', 'P01', 'P07', 'E03'];
@@ -140,6 +143,8 @@ async function doSignup() {
         }
         const { data: s } = await sb.auth.getSession();
         state.user = s.session.user;
+        // 프로필 생성 (실패해도 loadUserContext가 백필)
+        await sb.from('profiles').upsert({ id: state.user.id, username: username.trim() });
         await loadUserContext();
         state.authError = null;
     } catch (e) {
@@ -177,15 +182,76 @@ async function doLogin() {
     }
 }
 
+// ─────────────────────────────────────────────────────────
+// 관리자(선생님) 권한 전환
+// ─────────────────────────────────────────────────────────
+
+function showAdminPrompt() {
+    state.mode = 'admin';
+    state.authError = null;
+    render();
+}
+
+function closeAdminPrompt() {
+    state.mode = 'welcome';
+    state.authError = null;
+    render();
+}
+
+async function submitAdminPassword() {
+    if (state.authBusy) return;
+    const pw = document.getElementById('admin-password-input')?.value || '';
+    if (!pw) {
+        state.authError = '비밀번호를 입력해주세요';
+        render(); return;
+    }
+    state.authBusy = true; state.authError = null; render();
+    try {
+        const { data, error } = await sb.rpc('elevate_to_teacher', { admin_password: pw });
+        if (error) throw error;
+        if (data === true) {
+            await loadUserContext();
+            state.mode = 'welcome'; // role이 teacher로 갱신되어 render()가 대시보드 렌더
+        } else {
+            state.authError = '비밀번호가 일치하지 않습니다';
+        }
+    } catch (e) {
+        state.authError = translateAuthError(e);
+    } finally {
+        state.authBusy = false;
+        render();
+    }
+}
+
+function renderAdminPrompt() {
+    return `
+        <div class="card auth-card">
+            <h1>🔑 관리자 모드 전환</h1>
+            <p class="meta">관리자 비밀번호를 입력하면 선생님 권한으로 전환됩니다.</p>
+            <input id="admin-password-input" class="answer" type="password"
+                   placeholder="관리자 비밀번호" autocomplete="off" />
+            ${state.authError ? `<div class="auth-error">${escapeHTML(state.authError)}</div>` : ''}
+            <button class="primary block" onclick="submitAdminPassword()" ${state.authBusy ? 'disabled' : ''}>
+                ${state.authBusy ? '확인 중...' : '확인'}
+            </button>
+            <button class="block" onclick="closeAdminPrompt()">취소</button>
+        </div>
+    `;
+}
+
 async function doLogout() {
     if (!confirm('로그아웃하시겠어요?')) return;
     await sb.auth.signOut();
     state.user = null;
+    state.profile = null;
     state.dx = null;
     state.practice = null;
     state.inProgress = null;
     state.sessionCount = 0;
     state.pastSessions = null;
+    state.teacherData = null;
+    state.viewStudentId = null;
+    state.viewSession = null;
     state.mode = 'welcome';
     render();
 }
@@ -196,12 +262,87 @@ async function doLogout() {
 
 async function loadUserContext() {
     if (!state.user) return;
-    const [ip, sc] = await Promise.all([
-        sb.from('in_progress').select('current_dx, current_practice').eq('user_id', state.user.id).maybeSingle(),
-        sb.from('sessions').select('id', { count: 'exact', head: true }).eq('user_id', state.user.id),
+
+    // 프로필 로드 (없으면 생성: profiles 테이블 도입 전 가입자 대응)
+    let { data: profile } = await sb.from('profiles')
+        .select('*').eq('id', state.user.id).maybeSingle();
+    if (!profile) {
+        const username = state.user.user_metadata?.username
+            || (state.user.email || '').split('@')[0];
+        const { data: created } = await sb.from('profiles')
+            .insert({ id: state.user.id, username }).select().single();
+        profile = created;
+    }
+    state.profile = profile;
+
+    if (profile?.role === 'teacher') {
+        await loadTeacherData();
+        state.inProgress = null;
+        state.sessionCount = 0;
+    } else {
+        const [ip, sc] = await Promise.all([
+            sb.from('in_progress').select('current_dx, current_practice').eq('user_id', state.user.id).maybeSingle(),
+            sb.from('sessions').select('id', { count: 'exact', head: true }).eq('user_id', state.user.id),
+        ]);
+        state.inProgress = ip.data || { current_dx: null, current_practice: null };
+        state.sessionCount = sc.count || 0;
+        state.teacherData = null;
+    }
+}
+
+async function loadTeacherData() {
+    const [profilesResult, sessionsResult] = await Promise.all([
+        sb.from('profiles').select('*'),
+        sb.from('sessions').select('*').order('finished_at', { ascending: false }),
     ]);
-    state.inProgress = ip.data || { current_dx: null, current_practice: null };
-    state.sessionCount = sc.count || 0;
+    const allProfiles = profilesResult.data || [];
+    const sessions = sessionsResult.data || [];
+
+    const profileById = {};
+    for (const p of allProfiles) profileById[p.id] = p;
+
+    const students = allProfiles.filter(p => p.role === 'student');
+
+    // 학생별 집계
+    const sessionsByUser = new Map();
+    for (const s of sessions) {
+        if (!sessionsByUser.has(s.user_id)) sessionsByUser.set(s.user_id, []);
+        sessionsByUser.get(s.user_id).push(s);
+    }
+    const studentList = students.map(p => {
+        const userSessions = sessionsByUser.get(p.id) || [];
+        const allWeak = userSessions.flatMap(s => s.weak_concepts || []);
+        return {
+            ...p,
+            sessionCount: userSessions.length,
+            lastSession: userSessions[0] || null,
+            uniqueWeakCount: new Set(allWeak).size,
+        };
+    }).sort((a, b) => {
+        // 최근 진단 본 학생 먼저
+        const at = a.lastSession ? new Date(a.lastSession.finished_at).getTime() : 0;
+        const bt = b.lastSession ? new Date(b.lastSession.finished_at).getTime() : 0;
+        return bt - at;
+    });
+
+    // 반 전체 약점 빈도 (학생 단위 — 한 학생이 같은 약점 여러 번 진단해도 1로 셈)
+    const studentsWithWeakness = {};
+    for (const [uid, sList] of sessionsByUser.entries()) {
+        if (!profileById[uid] || profileById[uid].role !== 'student') continue;
+        const studentWeak = new Set(sList.flatMap(s => s.weak_concepts || []));
+        for (const w of studentWeak) studentsWithWeakness[w] = (studentsWithWeakness[w] || 0) + 1;
+    }
+    const classWeak = Object.entries(studentsWithWeakness)
+        .map(([cid, count]) => ({ cid, count }))
+        .sort((a, b) => b.count - a.count);
+
+    state.teacherData = {
+        students: studentList,
+        sessions,
+        sessionsByUser,
+        classWeak,
+        totalSessions: sessions.length,
+    };
 }
 
 async function saveDxToCloud() {
@@ -573,6 +714,12 @@ function formatDate(iso) {
 function render() {
     const root = document.getElementById('app');
     if (!state.user) { root.innerHTML = renderAuth(); }
+    else if (state.profile?.role === 'teacher') {
+        if (state.mode === 'teacherStudent') root.innerHTML = renderTeacherStudent();
+        else if (state.mode === 'pastResult') root.innerHTML = renderPastResult();
+        else root.innerHTML = renderTeacherDashboard();
+    }
+    else if (state.mode === 'admin') root.innerHTML = renderAdminPrompt();
     else if (state.mode === 'welcome') root.innerHTML = renderWelcome();
     else if (state.mode === 'dx') root.innerHTML = renderDx();
     else if (state.mode === 'result') root.innerHTML = renderResult();
@@ -594,6 +741,13 @@ function render() {
                 }
             });
         }
+    }
+    const adminInput = document.getElementById('admin-password-input');
+    if (adminInput) {
+        adminInput.focus();
+        adminInput.addEventListener('keypress', e => {
+            if (e.key === 'Enter') submitAdminPassword();
+        });
     }
 }
 
@@ -643,6 +797,9 @@ function renderWelcome() {
                 <button class="primary block" onclick="startDiagnosis()">새 진단 시작하기</button>
             `}
             ${sessionCount > 0 ? `<button class="block" onclick="viewHistory()">📋 지난 기록 보기 (${sessionCount}회)</button>` : ''}
+            <p class="admin-link-row">
+                <a class="admin-link" onclick="showAdminPrompt()">관리자로 전환</a>
+            </p>
         </div>
     `;
 }
@@ -859,14 +1016,32 @@ function renderHistory() {
     `;
 }
 
+function backFromPastResult() {
+    if (state.profile?.role === 'teacher' && state.viewStudentId) {
+        state.mode = 'teacherStudent';
+        state.viewSession = null;
+    } else {
+        state.mode = 'history';
+        state.viewSession = null;
+    }
+    render();
+}
+
 function renderPastResult() {
     const sess = state.viewSession;
-    if (!sess) return '<div class="card"><p>세션을 찾을 수 없어요.</p><button onclick="viewHistory()">목록으로</button></div>';
+    if (!sess) return '<div class="card"><p>세션을 찾을 수 없어요.</p><button onclick="backFromPastResult()">목록으로</button></div>';
+    const isTeacher = state.profile?.role === 'teacher';
     const weak = sess.weak_concepts || [];
     const roots = sess.root_concepts || [];
+    let studentLabel = '';
+    if (isTeacher && state.viewStudentId && state.teacherData) {
+        const stu = state.teacherData.students.find(s => s.id === state.viewStudentId);
+        if (stu) studentLabel = `<p class="meta">${escapeHTML(stu.username)} 학생</p>`;
+    }
     return `
         <div class="card">
             <h2>📊 ${formatDate(sess.finished_at)} 진단</h2>
+            ${studentLabel}
             <p>점수: <b>${sess.score} / ${sess.total}</b></p>
             ${weak.length === 0 ? '<p>큰 약점이 없었어요.</p>' : `
                 <h3>약점 개념 (${weak.length}개)</h3>
@@ -884,9 +1059,161 @@ function renderPastResult() {
             `}
             ${renderHistorySection(sess.history || [])}
             <p style="margin-top:24px">
-                <button class="block" onclick="viewHistory()">기록 목록으로</button>
-                <button class="block" onclick="restart()">처음으로</button>
+                ${isTeacher
+                    ? `<button class="block" onclick="backFromPastResult()">← 학생 상세로</button>
+                       <button class="block" onclick="backToTeacherDashboard()">대시보드로</button>`
+                    : `<button class="block" onclick="backFromPastResult()">기록 목록으로</button>
+                       <button class="block" onclick="restart()">처음으로</button>`}
             </p>
+        </div>
+    `;
+}
+
+// ─────────────────────────────────────────────────────────
+// 선생님 대시보드
+// ─────────────────────────────────────────────────────────
+
+function viewStudent(userId) {
+    state.viewStudentId = userId;
+    state.mode = 'teacherStudent';
+    render();
+}
+
+function backToTeacherDashboard() {
+    state.mode = 'welcome';
+    state.viewStudentId = null;
+    state.viewSession = null;
+    render();
+}
+
+function viewStudentSession(sessionId) {
+    const td = state.teacherData;
+    if (!td) return;
+    const sess = td.sessions.find(s => s.id === sessionId);
+    if (!sess) return;
+    state.viewSession = sess;
+    state.mode = 'pastResult';
+    render();
+}
+
+async function refreshTeacherData() {
+    await loadTeacherData();
+    render();
+}
+
+function renderTeacherDashboard() {
+    const td = state.teacherData;
+    if (!td) {
+        return `<div class="card"><p>대시보드 불러오는 중...</p></div>`;
+    }
+    const studentCount = td.students.length;
+    const totalSessions = td.totalSessions;
+    const top = td.classWeak.slice(0, 10);
+
+    return `
+        <div class="card">
+            <div class="header-row">
+                <h1>👨‍🏫 ${escapeHTML(getDisplayName())} 선생님</h1>
+                <button class="link-btn" onclick="doLogout()">로그아웃</button>
+            </div>
+
+            <div class="stats-row">
+                <div class="stat"><b>${studentCount}</b><span class="meta">학생</span></div>
+                <div class="stat"><b>${totalSessions}</b><span class="meta">진단 누적</span></div>
+                <div class="stat"><b>${td.classWeak.length}</b><span class="meta">발견된 개념 약점</span></div>
+            </div>
+
+            <button class="link-btn" onclick="refreshTeacherData()" style="float:right;margin-top:-8px">↻ 새로고침</button>
+
+            <h3>🔥 우리반 자주 막히는 개념 (학생 수 기준)</h3>
+            ${top.length === 0
+                ? '<p class="meta">아직 진단 데이터가 없어요.</p>'
+                : `<ul class="weakness-list">
+                    ${top.map((w, i) => {
+                        const c = state.conceptsById[w.cid];
+                        const name = c ? c['개념명'] : w.cid;
+                        const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
+                        return `<li>
+                            <b>${i+1}. ${escapeHTML(name)}</b>
+                            <span class="meta">— ${w.count}명 (${pct}%)</span>
+                            <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+                        </li>`;
+                    }).join('')}
+                </ul>`}
+
+            <h3>👥 학생 목록 (${studentCount}명)</h3>
+            ${studentCount === 0 ? '<p class="meta">아직 가입한 학생이 없어요.</p>' : `
+                <ul class="weakness-list">
+                    ${td.students.map(s => `
+                        <li class="student-row" onclick="viewStudent('${s.id}')">
+                            <b>${escapeHTML(s.username)}</b>
+                            <span class="meta">
+                                · 진단 ${s.sessionCount}회
+                                · 약점 ${s.uniqueWeakCount}개
+                                ${s.lastSession ? `· 마지막 ${formatDate(s.lastSession.finished_at)}` : '· 아직 안 풀어봄'}
+                            </span>
+                        </li>
+                    `).join('')}
+                </ul>
+            `}
+        </div>
+    `;
+}
+
+function renderTeacherStudent() {
+    const td = state.teacherData;
+    const sid = state.viewStudentId;
+    if (!td || !sid) return '<div class="card"><p>학생을 찾을 수 없어요.</p><button onclick="backToTeacherDashboard()">대시보드로</button></div>';
+
+    const student = td.students.find(s => s.id === sid);
+    if (!student) return '<div class="card"><p>학생 정보 없음.</p><button onclick="backToTeacherDashboard()">대시보드로</button></div>';
+
+    const studentSessions = td.sessionsByUser.get(sid) || [];
+    // 누적 약점 빈도
+    const weakFreq = {};
+    for (const s of studentSessions) {
+        for (const w of (s.weak_concepts || [])) {
+            weakFreq[w] = (weakFreq[w] || 0) + 1;
+        }
+    }
+    const weakSorted = Object.entries(weakFreq).sort((a, b) => b[1] - a[1]);
+
+    return `
+        <div class="card">
+            <div class="header-row">
+                <h2>👤 ${escapeHTML(student.username)} 학생</h2>
+                <button class="link-btn" onclick="backToTeacherDashboard()">← 대시보드</button>
+            </div>
+            <p class="meta">
+                진단 ${student.sessionCount}회 ·
+                평균 점수 ${studentSessions.length > 0
+                    ? Math.round(studentSessions.reduce((sum, s) => sum + s.score, 0) / studentSessions.reduce((sum, s) => sum + s.total, 0) * 100) + '%'
+                    : '—'}
+            </p>
+
+            ${weakSorted.length === 0 ? '<p>아직 진단 데이터가 없어요.</p>' : `
+                <h3>누적 약점 (자주 틀린 순)</h3>
+                <ul class="weakness-list">
+                    ${weakSorted.map(([cid, count]) => {
+                        const c = state.conceptsById[cid];
+                        const name = c ? c['개념명'] : cid;
+                        return `<li>
+                            <b>${escapeHTML(name)}</b>
+                            <span class="meta">${cid} · ${count}회 진단에서 약함</span>
+                        </li>`;
+                    }).join('')}
+                </ul>
+
+                <h3>진단 이력</h3>
+                <ul class="weakness-list">
+                    ${studentSessions.map(s => `
+                        <li class="student-row" onclick="viewStudentSession(${s.id})">
+                            <b>${formatDate(s.finished_at)}</b>
+                            <span class="meta"> · 점수 ${s.score}/${s.total} · 약점 ${(s.weak_concepts || []).length}개</span>
+                        </li>
+                    `).join('')}
+                </ul>
+            `}
         </div>
     `;
 }

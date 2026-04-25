@@ -351,6 +351,73 @@ button.link-btn {
 }
 
 /* ─────────────────────────────────────────────
+ * 선생님 대시보드
+ * ───────────────────────────────────────────── */
+
+.stats-row {
+    display: flex;
+    gap: 8px;
+    margin: 12px 0 20px;
+}
+
+.stat {
+    flex: 1;
+    background: #f3f6fb;
+    border-radius: 10px;
+    padding: 12px 8px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.stat b {
+    font-size: 22px;
+    color: #1a1a1a;
+    line-height: 1;
+}
+
+.stat .meta { font-size: 12px; }
+
+.bar {
+    height: 6px;
+    background: #e5e7eb;
+    border-radius: 3px;
+    margin-top: 6px;
+    overflow: hidden;
+}
+
+.bar-fill {
+    height: 100%;
+    background: #ff8a00;
+    border-radius: 3px;
+}
+
+.student-row {
+    cursor: pointer;
+    transition: background 0.15s;
+}
+
+.student-row:active {
+    background: #eef3ff;
+}
+
+/* 관리자 전환 링크 (학생 환영 화면 하단) */
+.admin-link-row {
+    margin-top: 24px;
+    text-align: center;
+}
+
+.admin-link {
+    font-size: 13px;
+    color: #aaa;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.admin-link:hover { color: #4a7eff; text-decoration: underline; }
+
+/* ─────────────────────────────────────────────
  * 수식 — 분수 / 루트
  * ───────────────────────────────────────────── */
 
