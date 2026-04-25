@@ -576,7 +576,9 @@ function renderMasteryList(category) {
             .map(c => ({ cid: c['개념ID'], c, m: null }));
     } else {
         items = Object.keys(mastery)
+            .filter(cid => state.conceptsById[cid])
             .filter(cid => getMasteryStatus(mastery[cid]) === category)
+            .filter(cid => (mastery[cid].total_seen || 0) >= 1)
             .map(cid => ({ cid, c: state.conceptsById[cid], m: mastery[cid] }));
         // 약점은 정답률 낮은 순, 마스터/학습중은 최근 본 순
         if (category === 'weak') {
@@ -933,13 +935,14 @@ function findRootWeaknesses() {
     const weak = state.dx.wrongConcepts;
     const roots = [];
     for (const cid of weak) {
-        // 현재 mastery 상태가 mastered/developing 이면 추천 대상에서 제외
-        // (한두 번 실수했어도 평소 잘하는 개념이라면 재학습 권유 X)
+        // 직접 풀어 'weak' 상태가 된 개념만 추천 대상으로
+        // (오답 매핑으로 추론만 됐을 뿐 직접 풀지 않은 미시도 개념 제외)
         const m = state.mastery?.[cid];
         const status = getMasteryStatus(m);
-        if (status === 'mastered' || status === 'developing') continue;
+        if (status !== 'weak') continue;
+        if (!state.conceptsById[cid]) continue;
         const prereqs = getPrereqs(cid);
-        const anyWeakPrereq = prereqs.some(p => weak.has(p));
+        const anyWeakPrereq = prereqs.some(p => weak.has(p) && getMasteryStatus(state.mastery?.[p]) === 'weak');
         if (!anyWeakPrereq) roots.push(cid);
     }
     return roots;
@@ -1206,6 +1209,7 @@ function renderWelcome() {
     const concepts = state.concepts || [];
     let mastered = 0, developing = 0, weak = 0;
     for (const cid of Object.keys(mastery)) {
+        if (!state.conceptsById[cid]) continue; // orphan 안전 처리
         const status = getMasteryStatus(mastery[cid]);
         if (status === 'mastered') mastered++;
         else if (status === 'developing') developing++;
@@ -1230,10 +1234,13 @@ function renderWelcome() {
     }
 
     // 현재 약점 TOP (정답률 낮은 순)
+    // — 직접 풀어 'weak' 가 된 개념만 (미시도/추정만 된 개념 제외)
     const weaknessList = [];
     for (const cid of Object.keys(mastery)) {
+        if (!state.conceptsById[cid]) continue;
         const m = mastery[cid];
         if (getMasteryStatus(m) !== 'weak') continue;
+        if ((m.total_seen || 0) < 1) continue; // 직접 시도 보장
         const acc = m.total_seen > 0 ? m.total_correct / m.total_seen : 0;
         weaknessList.push({ cid, m, acc });
     }
@@ -1396,7 +1403,17 @@ function renderResult() {
     const dx = state.dx;
     if (!dx) return `<div class="card"><p>표시할 결과가 없습니다.</p><button onclick="restart()">처음으로</button></div>`;
 
-    const weak = [...dx.wrongConcepts];
+    // 직접 풀어 mastery 가 'weak' 가 된 개념만 진짜 약점으로 분류
+    const allWrong = [...dx.wrongConcepts];
+    const weak = allWrong.filter(cid => {
+        if (!state.conceptsById[cid]) return false;
+        return getMasteryStatus(state.mastery?.[cid]) === 'weak';
+    });
+    // 매력 오답 매핑으로 추정된 (직접 풀지 않은) 개념은 별도 표시
+    const suspected = allWrong.filter(cid => {
+        if (!state.conceptsById[cid]) return false;
+        return getMasteryStatus(state.mastery?.[cid]) !== 'weak';
+    });
     const roots = findRootWeaknesses();
     const correctCount = dx.history.filter(h => h.correct).length;
     const total = dx.history.length;
@@ -1413,29 +1430,49 @@ function renderResult() {
             <p>점수: <b>${correctCount} / ${total}</b></p>
             <p class="meta">결과는 ${escapeHTML(getDisplayName())} 님 계정에 저장되었습니다.</p>
 
-            ${weak.length === 0 ? `
+            ${weak.length === 0 && suspected.length === 0 ? `
                 <p>🎉 큰 약점이 발견되지 않았어요.</p>
             ` : `
-                <h3>약점 개념 (${weak.length}개)</h3>
-                <ul class="weakness-list">
-                    ${weak.map(cid => {
-                        const c = state.conceptsById[cid];
-                        if (!c) return '';
-                        const isRoot = roots.includes(cid);
-                        return `<li class="${isRoot ? 'root' : ''}">
-                            ${isRoot ? '★ ' : ''}<b>${escapeHTML(c['개념명'])}</b>
-                            <span class="meta">${cid} · ${escapeHTML(c['영역'])} · ${escapeHTML(c['학년단계'])}</span>
-                        </li>`;
-                    }).join('')}
-                </ul>
+                ${weak.length > 0 ? `
+                    <h3>약점 개념 (${weak.length}개)</h3>
+                    <p class="meta">직접 풀어서 틀린 개념입니다.</p>
+                    <ul class="weakness-list">
+                        ${weak.map(cid => {
+                            const c = state.conceptsById[cid];
+                            if (!c) return '';
+                            const isRoot = roots.includes(cid);
+                            return `<li class="${isRoot ? 'root' : ''}">
+                                ${isRoot ? '★ ' : ''}<b>${escapeHTML(c['개념명'])}</b>
+                                <span class="meta">${cid} · ${escapeHTML(c['영역'])} · ${escapeHTML(c['학년단계'])}</span>
+                            </li>`;
+                        }).join('')}
+                    </ul>
 
-                <h3>🌱 추천 시작 개념</h3>
-                <p>아래 개념부터 학습하시면 위쪽 약점들이 함께 풀려요. 개념 설명을 먼저 보고 문제를 풀 수 있어요.</p>
-                ${roots.map(cid => {
-                    const c = state.conceptsById[cid];
-                    if (!c) return '';
-                    return `<button class="primary block" onclick="studyConcept('${cid}')">📖 ${escapeHTML(c['개념명'])} 개념 보기</button>`;
-                }).join('')}
+                    ${roots.length > 0 ? `
+                        <h3>🌱 추천 시작 개념</h3>
+                        <p>아래 개념부터 학습하시면 위쪽 약점들이 함께 풀려요. 개념 설명을 먼저 보고 문제를 풀 수 있어요.</p>
+                        ${roots.map(cid => {
+                            const c = state.conceptsById[cid];
+                            if (!c) return '';
+                            return `<button class="primary block" onclick="studyConcept('${cid}')">📖 ${escapeHTML(c['개념명'])} 개념 보기</button>`;
+                        }).join('')}
+                    ` : ''}
+                ` : ''}
+
+                ${suspected.length > 0 ? `
+                    <h3 style="margin-top:24px">🔍 확인이 필요한 개념 (${suspected.length}개)</h3>
+                    <p class="meta">매력 오답을 골라 시사된 개념이지만 직접 풀지 않았어요. 다음 진단에서 직접 풀어봐야 약점 여부가 확정됩니다.</p>
+                    <ul class="weakness-list">
+                        ${suspected.map(cid => {
+                            const c = state.conceptsById[cid];
+                            if (!c) return '';
+                            return `<li>
+                                <b>${escapeHTML(c['개념명'])}</b>
+                                <span class="meta">${cid} · ${escapeHTML(c['영역'])}</span>
+                            </li>`;
+                        }).join('')}
+                    </ul>
+                ` : ''}
             `}
 
             ${renderHistorySection(dx.history)}
