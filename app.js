@@ -30,6 +30,7 @@ const state = {
     studyConceptId: null,    // 학생 - 개념 설명 페이지에서 보고 있는 개념
     viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
     mastery: null,           // { [conceptId]: { correct_streak, total_seen, total_correct, ... } }
+    masteryListFilter: null, // 'mastered' | 'developing' | 'weak' | 'untouched' | null
 };
 
 // 적응형 진단 파라미터
@@ -459,6 +460,89 @@ function shouldTestInBattery(conceptId) {
     return Math.random() < MASTERY_RANDOM_RECHECK;
 }
 
+function toggleMasteryList(category) {
+    if (state.masteryListFilter === category) {
+        state.masteryListFilter = null;
+    } else {
+        state.masteryListFilter = category;
+    }
+    render();
+}
+
+function renderMasteryList(category) {
+    const mastery = state.mastery || {};
+    const concepts = state.concepts || [];
+    const labels = {
+        mastered: '🌟 마스터한 개념',
+        developing: '📈 학습 중인 개념',
+        weak: '⚠️ 약점 개념',
+        untouched: '📋 아직 안 풀어본 개념',
+    };
+
+    let items = [];
+    if (category === 'untouched') {
+        items = concepts
+            .filter(c => !mastery[c['개념ID']] || (mastery[c['개념ID']]?.total_seen || 0) === 0)
+            .map(c => ({ cid: c['개념ID'], c, m: null }));
+    } else {
+        items = Object.keys(mastery)
+            .filter(cid => getMasteryStatus(mastery[cid]) === category)
+            .map(cid => ({ cid, c: state.conceptsById[cid], m: mastery[cid] }));
+        // 약점은 정답률 낮은 순, 마스터/학습중은 최근 본 순
+        if (category === 'weak') {
+            items.sort((a, b) => {
+                const accA = a.m.total_seen ? a.m.total_correct / a.m.total_seen : 0;
+                const accB = b.m.total_seen ? b.m.total_correct / b.m.total_seen : 0;
+                return accA - accB;
+            });
+        } else {
+            items.sort((a, b) => {
+                const ta = a.m.last_seen_at ? new Date(a.m.last_seen_at).getTime() : 0;
+                const tb = b.m.last_seen_at ? new Date(b.m.last_seen_at).getTime() : 0;
+                return tb - ta;
+            });
+        }
+    }
+
+    if (items.length === 0) {
+        return `<div class="mastery-list-detail"><h4>${labels[category]}</h4><p class="meta">해당 개념이 없어요.</p></div>`;
+    }
+
+    // 영역별로 그룹화
+    const byArea = {};
+    for (const it of items) {
+        const area = it.c?.['영역'] || '기타';
+        if (!byArea[area]) byArea[area] = [];
+        byArea[area].push(it);
+    }
+
+    return `
+        <div class="mastery-list-detail">
+            <h4>${labels[category]} (${items.length})</h4>
+            <p class="meta">개념을 클릭하면 설명을 볼 수 있어요</p>
+            ${Object.entries(byArea).map(([area, list]) => `
+                <div class="area-group">
+                    <div class="area-group-label">${escapeHTML(area)} (${list.length})</div>
+                    <ul class="weakness-list">
+                        ${list.map(({ cid, c, m }) => {
+                            const name = c?.['개념명'] || cid;
+                            let extra = '';
+                            if (m && m.total_seen > 0) {
+                                const acc = Math.round((m.total_correct / m.total_seen) * 100);
+                                extra = ` · 정답률 ${acc}% · 연속 ${m.correct_streak}회`;
+                            }
+                            return `<li class="student-row" onclick="studyConcept('${cid}')">
+                                <b>${escapeHTML(name)}</b>
+                                <span class="meta">${cid}${extra}</span>
+                            </li>`;
+                        }).join('')}
+                    </ul>
+                </div>
+            `).join('')}
+        </div>
+    `;
+}
+
 async function updateMastery(conceptId, correct) {
     if (!state.user || !conceptId) return;
     state.mastery = state.mastery || {};
@@ -558,30 +642,61 @@ function pickProblem(conceptId, opts = {}) {
 // 진단 흐름
 // ─────────────────────────────────────────────────────────
 
+// 개념 그래프 깊이: 선수 개념이 깊을수록 더 상위 개념
+const _conceptDepthMemo = {};
+function getConceptDepth(cid) {
+    if (cid in _conceptDepthMemo) return _conceptDepthMemo[cid];
+    const prereqs = getPrereqs(cid);
+    if (prereqs.length === 0) {
+        _conceptDepthMemo[cid] = 0;
+        return 0;
+    }
+    let maxDepth = 0;
+    for (const p of prereqs) {
+        const d = getConceptDepth(p);
+        if (d > maxDepth) maxDepth = d;
+    }
+    _conceptDepthMemo[cid] = maxDepth + 1;
+    return _conceptDepthMemo[cid];
+}
+
 function buildDynamicBattery() {
     // 1단계: 코어 배터리에서 마스터 안 된 개념만
     let battery = DIAGNOSTIC_BATTERY.filter(shouldTestInBattery);
 
-    // 2단계: 부족하면 가장 적게 본 비마스터 개념으로 보충
+    // 2단계: 부족하면 보충. 우선순위:
+    //   (1) 선수 개념에 약점이 없어 도전 가능한 것
+    //   (2) 더 상위(깊은) 개념 우선 — 학생을 위로 끌어올리는 방향
+    //   (3) 동률이면 적게 본 순
     if (battery.length < TARGET_BATTERY_SIZE) {
         const allCids = state.concepts.map(c => c['개념ID']);
         const supplements = allCids
             .filter(cid => !battery.includes(cid))
             .filter(cid => shouldTestInBattery(cid))
-            .map(cid => ({ cid, seen: state.mastery?.[cid]?.total_seen || 0 }))
-            .sort((a, b) => a.seen - b.seen);  // 적게 본 순
+            .filter(cid => {
+                // 선수 개념 중 'weak' 인 게 있으면 아직 도전 어려움
+                const prereqs = getPrereqs(cid);
+                return !prereqs.some(p => getMasteryStatus(state.mastery?.[p]) === 'weak');
+            })
+            .map(cid => ({
+                cid,
+                depth: getConceptDepth(cid),
+                seen: state.mastery?.[cid]?.total_seen || 0,
+            }))
+            .sort((a, b) => {
+                if (b.depth !== a.depth) return b.depth - a.depth;  // 깊은(상위) 개념 먼저
+                return a.seen - b.seen;
+            });
         const needed = TARGET_BATTERY_SIZE - battery.length;
         for (const s of supplements.slice(0, needed)) battery.push(s.cid);
     }
 
-    // 너무 많으면 자르기
-    if (battery.length > TARGET_BATTERY_SIZE) {
-        battery = shuffle(battery).slice(0, TARGET_BATTERY_SIZE);
-    }
-
-    // 모두 마스터 (배터리 비어있을 수도) → 무작위 마스터 4개 검증
+    // 모두 마스터 → 무작위 마스터 4개 재검증
     if (battery.length === 0) {
         battery = shuffle([...DIAGNOSTIC_BATTERY]).slice(0, 4);
+    }
+    if (battery.length > TARGET_BATTERY_SIZE) {
+        battery = shuffle(battery).slice(0, TARGET_BATTERY_SIZE);
     }
 
     return shuffle(battery);
@@ -1048,11 +1163,12 @@ function renderWelcome() {
 
             ${totalTracked > 0 ? `
                 <div class="mastery-summary four-cols">
-                    <div class="m-stat m-mastered"><b>${mastered}</b><span>🌟 마스터</span></div>
-                    <div class="m-stat m-developing"><b>${developing}</b><span>📈 학습 중</span></div>
-                    <div class="m-stat m-weak"><b>${weak}</b><span>⚠️ 약점</span></div>
-                    <div class="m-stat m-untouched"><b>${untouched}</b><span>📋 미시도</span></div>
+                    <div class="m-stat m-mastered ${state.masteryListFilter === 'mastered' ? 'active' : ''}" onclick="toggleMasteryList('mastered')"><b>${mastered}</b><span>🌟 마스터</span></div>
+                    <div class="m-stat m-developing ${state.masteryListFilter === 'developing' ? 'active' : ''}" onclick="toggleMasteryList('developing')"><b>${developing}</b><span>📈 학습 중</span></div>
+                    <div class="m-stat m-weak ${state.masteryListFilter === 'weak' ? 'active' : ''}" onclick="toggleMasteryList('weak')"><b>${weak}</b><span>⚠️ 약점</span></div>
+                    <div class="m-stat m-untouched ${state.masteryListFilter === 'untouched' ? 'active' : ''}" onclick="toggleMasteryList('untouched')"><b>${untouched}</b><span>📋 미시도</span></div>
                 </div>
+                ${state.masteryListFilter ? renderMasteryList(state.masteryListFilter) : ''}
 
                 <h3>영역별 진척도</h3>
                 <div class="area-progress">

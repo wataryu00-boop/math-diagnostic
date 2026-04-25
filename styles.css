@@ -382,6 +382,48 @@ button.link-btn {
 .mastery-summary.four-cols .m-stat b { font-size: 18px; }
 .mastery-summary.four-cols .m-stat span { font-size: 11px; }
 
+.m-stat {
+    cursor: pointer;
+    position: relative;
+    border: 2px solid transparent;
+    transition: transform 0.12s, border-color 0.15s;
+}
+.m-stat:active { transform: scale(0.96); }
+.m-stat.active {
+    border-color: currentColor;
+}
+.m-stat.active::after {
+    content: "▾";
+    position: absolute;
+    bottom: -2px;
+    right: 4px;
+    font-size: 10px;
+}
+
+/* 카테고리별 개념 목록 */
+.mastery-list-detail {
+    background: #f8f9fb;
+    border-radius: 10px;
+    padding: 14px 16px;
+    margin: 0 0 18px;
+}
+.mastery-list-detail h4 {
+    margin: 0 0 6px;
+    font-size: 16px;
+}
+.mastery-list-detail .area-group {
+    margin: 10px 0;
+}
+.mastery-list-detail .area-group-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #555;
+    margin: 6px 0 4px;
+}
+.mastery-list-detail .weakness-list li {
+    background: #fff;
+}
+
 /* 영역별 진척도 막대 */
 .area-progress { margin: 8px 0 16px; }
 .area-row {
