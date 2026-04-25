@@ -40,6 +40,7 @@ const MASTERY_RECHECK_DAYS = 30;      // 마스터 후 N일 지나면 재검증
 const MASTERY_RANDOM_RECHECK = 0.05;  // 마스터여도 무작위 재검증 확률
 const STREAK_DECAY_ON_WRONG = 2;      // 오답 시 streak 감쇠량 (전체 리셋 X — 1번 실수로 약점 처리 X)
 const TARGET_BATTERY_SIZE = 8;        // 동적 배터리 목표 크기
+const PRACTICE_TARGET_CORRECT = 5;    // 학습 모드 종료 기준 정답 수
 
 const DIAGNOSTIC_BATTERY = [
     'F04', 'F05', 'I05', 'M06', 'P01', 'P07', 'E03',  // 수와 식
@@ -1017,6 +1018,14 @@ function startPractice(conceptId) {
 function nextPracticeQuestion() {
     state.practice.showingFeedback = false;
     state.practice.selectedIndex = null;
+    // 5번 정답 달성 → 더 출제하지 않고 종료 화면으로
+    if ((state.practice.correctCount || 0) >= PRACTICE_TARGET_CORRECT) {
+        state.practice.currentProblem = null;
+        state.practice.currentChoices = [];
+        savePracticeToCloud();
+        render();
+        return;
+    }
     const next = state.practice.queue.shift() || null;
     state.practice.currentProblem = next;
     state.practice.currentChoices = next ? buildChoices(next) : [];
@@ -1559,10 +1568,17 @@ function renderPractice() {
     const p = pr.currentProblem;
 
     if (!p) {
+        const reached = (pr.correctCount || 0) >= PRACTICE_TARGET_CORRECT;
+        const headline = reached
+            ? `🎉 ${PRACTICE_TARGET_CORRECT}문제 정답 달성!`
+            : `📚 ${escapeHTML(concept['개념명'])} 학습 종료`;
+        const message = reached
+            ? `${escapeHTML(concept['개념명'])} 개념을 충분히 익혔어요. 다른 학습으로 넘어가도 좋아요.`
+            : `이번 학습 회차가 끝났어요. 점수가 부족하면 다시 한 번 시도해 보세요.`;
         return `
             <div class="card">
-                <h2>📚 ${escapeHTML(concept['개념명'])} 학습 완료</h2>
-                <p>이 개념의 모든 문제를 풀었습니다.</p>
+                <h2>${headline}</h2>
+                <p>${message}</p>
                 <p>점수: <b>${pr.correctCount} / ${pr.totalCount}</b></p>
                 <button class="primary block" onclick="backToResult()">결과 화면으로</button>
             </div>
@@ -1574,7 +1590,7 @@ function renderPractice() {
     if (!pr.showingFeedback) {
         return `
             <div class="card">
-                <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])}</div>
+                <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])} · 정답 ${pr.correctCount}/${PRACTICE_TARGET_CORRECT}</div>
                 <div class="problem">${formatMath(p['문제'])}</div>
                 ${renderChoices(pr.currentChoices, pr.selectedIndex, false, 'selectPracticeChoice')}
                 <button class="primary block" onclick="submitPracticeAnswer()" ${pr.selectedIndex === null ? 'disabled' : ''}>확인</button>
@@ -1586,7 +1602,7 @@ function renderPractice() {
         if (isCorrect) {
             return `
                 <div class="card">
-                    <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])}</div>
+                    <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])} · 정답 ${pr.correctCount}/${PRACTICE_TARGET_CORRECT}</div>
                     <div class="problem">${formatMath(p['문제'])}</div>
                     ${renderChoices(pr.currentChoices, pr.selectedIndex, true, 'selectPracticeChoice')}
                     <div class="correct correct-flash">✓ 정답입니다!</div>
@@ -1596,7 +1612,7 @@ function renderPractice() {
         }
         return `
             <div class="card">
-                <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])}</div>
+                <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])} · 정답 ${pr.correctCount}/${PRACTICE_TARGET_CORRECT}</div>
                 <div class="problem">${formatMath(p['문제'])}</div>
                 ${renderChoices(pr.currentChoices, pr.selectedIndex, true, 'selectPracticeChoice')}
                 <div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>
