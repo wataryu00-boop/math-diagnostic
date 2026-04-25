@@ -33,9 +33,11 @@ const state = {
 };
 
 // 적응형 진단 파라미터
-const MASTERY_THRESHOLD = 3;          // 연속 정답 N회 = 마스터
-const MASTERY_RECHECK_DAYS = 14;      // 마스터 후 N일 지나면 재검증
-const MASTERY_RANDOM_RECHECK = 0.15;  // 마스터여도 무작위 재검증 확률
+const MASTERY_THRESHOLD = 4;          // 연속 정답 N회 = 마스터
+const MASTERY_RECHECK_DAYS = 30;      // 마스터 후 N일 지나면 재검증
+const MASTERY_RANDOM_RECHECK = 0.05;  // 마스터여도 무작위 재검증 확률
+const STREAK_DECAY_ON_WRONG = 2;      // 오답 시 streak 감쇠량 (전체 리셋 X — 1번 실수로 약점 처리 X)
+const TARGET_BATTERY_SIZE = 8;        // 동적 배터리 목표 크기
 
 const DIAGNOSTIC_BATTERY = [
     'F04', 'F05', 'I05', 'M06', 'P01', 'P07', 'E03',  // 수와 식
@@ -473,11 +475,15 @@ async function updateMastery(conceptId, correct) {
     };
 
     const now = new Date().toISOString();
+    const prevStreak = existing.correct_streak || 0;
+    const newStreak = correct
+        ? prevStreak + 1
+        : Math.max(0, prevStreak - STREAK_DECAY_ON_WRONG);
     const updated = {
         ...existing,
         total_seen: (existing.total_seen || 0) + 1,
         total_correct: (existing.total_correct || 0) + (correct ? 1 : 0),
-        correct_streak: correct ? (existing.correct_streak || 0) + 1 : 0,
+        correct_streak: newStreak,
         last_seen_at: now,
         last_correct_at: correct ? now : existing.last_correct_at,
         last_wrong_at: correct ? existing.last_wrong_at : now,
@@ -552,18 +558,40 @@ function pickProblem(conceptId, opts = {}) {
 // 진단 흐름
 // ─────────────────────────────────────────────────────────
 
-function startDiagnosis() {
-    state.mode = 'dx';
-
-    // Mastery 기반 배터리 필터: 마스터된 개념은 일단 건너뜀 (재검증 조건은 shouldTestInBattery에서)
+function buildDynamicBattery() {
+    // 1단계: 코어 배터리에서 마스터 안 된 개념만
     let battery = DIAGNOSTIC_BATTERY.filter(shouldTestInBattery);
-    // 모두 마스터 → 무작위 4개 verification
+
+    // 2단계: 부족하면 가장 적게 본 비마스터 개념으로 보충
+    if (battery.length < TARGET_BATTERY_SIZE) {
+        const allCids = state.concepts.map(c => c['개념ID']);
+        const supplements = allCids
+            .filter(cid => !battery.includes(cid))
+            .filter(cid => shouldTestInBattery(cid))
+            .map(cid => ({ cid, seen: state.mastery?.[cid]?.total_seen || 0 }))
+            .sort((a, b) => a.seen - b.seen);  // 적게 본 순
+        const needed = TARGET_BATTERY_SIZE - battery.length;
+        for (const s of supplements.slice(0, needed)) battery.push(s.cid);
+    }
+
+    // 너무 많으면 자르기
+    if (battery.length > TARGET_BATTERY_SIZE) {
+        battery = shuffle(battery).slice(0, TARGET_BATTERY_SIZE);
+    }
+
+    // 모두 마스터 (배터리 비어있을 수도) → 무작위 마스터 4개 검증
     if (battery.length === 0) {
         battery = shuffle([...DIAGNOSTIC_BATTERY]).slice(0, 4);
     }
 
+    return shuffle(battery);
+}
+
+function startDiagnosis() {
+    state.mode = 'dx';
+    const battery = buildDynamicBattery();
     state.dx = {
-        queue: shuffle(battery),
+        queue: battery,
         asked: new Set(),
         wrongConcepts: new Set(),
         history: [],
@@ -572,7 +600,6 @@ function startDiagnosis() {
         selectedIndex: null,
         showingFeedback: false,
         lastInferred: null,
-        skippedByMastery: DIAGNOSTIC_BATTERY.length - battery.length,
     };
     nextDxQuestion();
 }
@@ -626,9 +653,11 @@ function submitDxAnswer() {
         state.dx.wrongConcepts.add(inferred);
         for (const pre of getPrereqs(inferred)) {
             const alreadyTested = state.dx.history.some(h => h.conceptId === pre);
-            if (!state.dx.queue.includes(pre) && !alreadyTested) {
-                state.dx.queue.push(pre);
-            }
+            if (state.dx.queue.includes(pre) || alreadyTested) continue;
+            // 마스터된 선수 개념은 드릴다운에서 건너뜀 (오개념 의심 안 함)
+            const m = state.mastery?.[pre];
+            if (m && getMasteryStatus(m) === 'mastered') continue;
+            state.dx.queue.push(pre);
         }
     }
 
@@ -669,9 +698,10 @@ function skipDxAnswer() {
     state.dx.wrongConcepts.add(inferred);
     for (const pre of getPrereqs(inferred)) {
         const alreadyTested = state.dx.history.some(h => h.conceptId === pre);
-        if (!state.dx.queue.includes(pre) && !alreadyTested) {
-            state.dx.queue.push(pre);
-        }
+        if (state.dx.queue.includes(pre) || alreadyTested) continue;
+        const m = state.mastery?.[pre];
+        if (m && getMasteryStatus(m) === 'mastered') continue;
+        state.dx.queue.push(pre);
     }
     state.dx.history.push({
         problemId: problem['문제ID'],
@@ -698,11 +728,40 @@ function findRootWeaknesses() {
     const weak = state.dx.wrongConcepts;
     const roots = [];
     for (const cid of weak) {
+        // 현재 mastery 상태가 mastered/developing 이면 추천 대상에서 제외
+        // (한두 번 실수했어도 평소 잘하는 개념이라면 재학습 권유 X)
+        const m = state.mastery?.[cid];
+        const status = getMasteryStatus(m);
+        if (status === 'mastered' || status === 'developing') continue;
         const prereqs = getPrereqs(cid);
         const anyWeakPrereq = prereqs.some(p => weak.has(p));
         if (!anyWeakPrereq) roots.push(cid);
     }
     return roots;
+}
+
+// 누적 mastery 기반 현재 약점 분석 (이번 세션 무관)
+function findCurrentRootWeakness() {
+    const mastery = state.mastery || {};
+    const weakConcepts = Object.keys(mastery).filter(cid =>
+        getMasteryStatus(mastery[cid]) === 'weak'
+    );
+    if (weakConcepts.length === 0) return null;
+    const weakSet = new Set(weakConcepts);
+    // 약점 중 선수 개념도 약점인 게 없으면 뿌리
+    const roots = weakConcepts.filter(cid => {
+        const prereqs = getPrereqs(cid);
+        return !prereqs.some(p => weakSet.has(p));
+    });
+    const candidates = roots.length > 0 ? roots : weakConcepts;
+    // 정답률 낮은 순
+    candidates.sort((a, b) => {
+        const ma = mastery[a], mb = mastery[b];
+        const accA = ma.total_seen > 0 ? ma.total_correct / ma.total_seen : 0;
+        const accB = mb.total_seen > 0 ? mb.total_correct / mb.total_seen : 0;
+        return accA - accB;
+    });
+    return candidates[0] || null;
 }
 
 // ─────────────────────────────────────────────────────────
@@ -937,8 +996,9 @@ function renderWelcome() {
     const inProgressKind = ip.current_practice ? '학습' : (ip.current_dx ? '진단' : null);
     const sessionCount = state.sessionCount || 0;
 
-    // Mastery 요약
+    // Mastery 누적 요약 + 영역별
     const mastery = state.mastery || {};
+    const concepts = state.concepts || [];
     let mastered = 0, developing = 0, weak = 0;
     for (const cid of Object.keys(mastery)) {
         const status = getMasteryStatus(mastery[cid]);
@@ -947,6 +1007,37 @@ function renderWelcome() {
         else if (status === 'weak') weak++;
     }
     const totalTracked = mastered + developing + weak;
+    const untouched = Math.max(0, concepts.length - totalTracked);
+
+    // 영역별 진척도
+    const byArea = {};
+    for (const c of concepts) {
+        const area = c['영역'] || '기타';
+        if (!byArea[area]) byArea[area] = { total: 0, mastered: 0, dev: 0, weak: 0 };
+        byArea[area].total++;
+        const m = mastery[c['개념ID']];
+        if (m) {
+            const s = getMasteryStatus(m);
+            if (s === 'mastered') byArea[area].mastered++;
+            else if (s === 'developing') byArea[area].dev++;
+            else if (s === 'weak') byArea[area].weak++;
+        }
+    }
+
+    // 현재 약점 TOP (정답률 낮은 순)
+    const weaknessList = [];
+    for (const cid of Object.keys(mastery)) {
+        const m = mastery[cid];
+        if (getMasteryStatus(m) !== 'weak') continue;
+        const acc = m.total_seen > 0 ? m.total_correct / m.total_seen : 0;
+        weaknessList.push({ cid, m, acc });
+    }
+    weaknessList.sort((a, b) => a.acc - b.acc);
+    const topWeak = weaknessList.slice(0, 5);
+
+    // 추천 학습 (현재 약점 중 뿌리)
+    const recCid = findCurrentRootWeakness();
+    const recName = recCid ? (state.conceptsById[recCid]?.['개념명'] || recCid) : null;
 
     return `
         <div class="card">
@@ -954,19 +1045,53 @@ function renderWelcome() {
                 <h1>📘 ${escapeHTML(getDisplayName())}님</h1>
                 <button class="link-btn" onclick="doLogout()">로그아웃</button>
             </div>
+
             ${totalTracked > 0 ? `
-                <div class="mastery-summary">
+                <div class="mastery-summary four-cols">
                     <div class="m-stat m-mastered"><b>${mastered}</b><span>🌟 마스터</span></div>
                     <div class="m-stat m-developing"><b>${developing}</b><span>📈 학습 중</span></div>
                     <div class="m-stat m-weak"><b>${weak}</b><span>⚠️ 약점</span></div>
+                    <div class="m-stat m-untouched"><b>${untouched}</b><span>📋 미시도</span></div>
                 </div>
+
+                <h3>영역별 진척도</h3>
+                <div class="area-progress">
+                    ${Object.entries(byArea).map(([area, stats]) => {
+                        const pct = stats.total > 0 ? Math.round(stats.mastered / stats.total * 100) : 0;
+                        return `<div class="area-row">
+                            <span class="area-name">${escapeHTML(area)}</span>
+                            <div class="area-bar"><div class="area-fill" style="width:${pct}%"></div></div>
+                            <span class="area-frac">${stats.mastered}/${stats.total}</span>
+                        </div>`;
+                    }).join('')}
+                </div>
+
+                ${topWeak.length > 0 ? `
+                    <h3>⚠️ 현재 약점 TOP ${topWeak.length}</h3>
+                    <ul class="weakness-list">
+                        ${topWeak.map(({cid, m, acc}) => {
+                            const c = state.conceptsById[cid];
+                            return `<li>
+                                <b>${escapeHTML(c?.['개념명'] || cid)}</b>
+                                <span class="meta"> · 정답률 ${Math.round(acc * 100)}% (${m.total_correct}/${m.total_seen})</span>
+                            </li>`;
+                        }).join('')}
+                    </ul>
+                ` : ''}
+            ` : `
+                <p class="meta">아직 진단 데이터가 없어요. 진단을 시작해보세요.</p>
+            `}
+
+            ${recCid ? `
+                <button class="primary block" onclick="studyConcept('${recCid}')">🌱 추천 학습: ${escapeHTML(recName)}</button>
             ` : ''}
+
             ${inProgressKind ? `
                 <div class="resume-banner">진행 중인 ${inProgressKind}이 있어요.</div>
                 <button class="primary block" onclick="resumeProgress()">▶ 이어풀기</button>
                 <button class="block" onclick="startDiagnosis()">새 진단 시작</button>
             ` : `
-                <button class="primary block" onclick="startDiagnosis()">새 진단 시작하기</button>
+                <button class="${recCid ? '' : 'primary'} block" onclick="startDiagnosis()">새 진단 시작하기</button>
             `}
             ${sessionCount > 0 ? `<button class="block" onclick="viewHistory()">📋 지난 기록 보기 (${sessionCount}회)</button>` : ''}
             <p class="admin-link-row">
