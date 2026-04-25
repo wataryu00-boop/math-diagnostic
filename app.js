@@ -442,8 +442,8 @@ function pickProblem(conceptId, opts = {}) {
         .filter(p => !askedDx.has(p['문제ID']) && !askedPr.has(p['문제ID']));
     if (pool.length === 0) return null;
     if (opts.diagnostic) {
-        const dx = pool.find(p => p['용도'] === '진단');
-        if (dx) return dx;
+        // 매번 다른 문제가 나오도록 풀에서 랜덤 선택
+        return pool[Math.floor(Math.random() * pool.length)];
     }
     pool.sort((a, b) => parseInt(a['난이도']) - parseInt(b['난이도']));
     return pool[0];
@@ -456,7 +456,7 @@ function pickProblem(conceptId, opts = {}) {
 function startDiagnosis() {
     state.mode = 'dx';
     state.dx = {
-        queue: [...DIAGNOSTIC_BATTERY],
+        queue: shuffle([...DIAGNOSTIC_BATTERY]),
         asked: new Set(),
         wrongConcepts: new Set(),
         history: [],
