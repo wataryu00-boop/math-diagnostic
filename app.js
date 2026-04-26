@@ -1335,12 +1335,15 @@ function _convertMathChunk(s) {
     t = t.replace(/√\(([^()]+)\)/g, '\\sqrt{$1}');
     t = t.replace(/√(\d+)/g, '\\sqrt{$1}');
     t = t.replace(/√([a-zA-Z])/g, '\\sqrt{$1}');
-    // 분수 — 괄호 형태 우선
-    t = t.replace(/\(([^()]+)\)\/\(([^()]+)\)/g, '\\frac{$1}{$2}');
-    t = t.replace(/\(([^()]+)\)\/(\d+|[a-zA-Z]+)/g, '\\frac{$1}{$2}');
-    t = t.replace(/(\d+|[a-zA-Z]+)\/\(([^()]+)\)/g, '\\frac{$1}{$2}');
-    // 단순 분수
-    t = t.replace(/(\d+|[a-zA-Z]+)\/(\d+|[a-zA-Z]+)(?![\/\^])/g, '\\frac{$1}{$2}');
+    // 분수 — √ 변환 후이므로 \sqrt{...} 를 한 단위(atom) 로 취급.
+    // atom = (계수)?\sqrt{...} | 숫자 | 문자.  /  앞뒤 공백 허용.
+    const ATOM = '(?:\\d+\\\\sqrt\\{[^}]+\\}|\\\\sqrt\\{[^}]+\\}|\\d+|[a-zA-Z]+)';
+    // 괄호 분수 우선
+    t = t.replace(/\(([^()]+)\)\s*\/\s*\(([^()]+)\)/g, '\\frac{$1}{$2}');
+    t = t.replace(new RegExp('\\(([^()]+)\\)\\s*\\/\\s*(' + ATOM + ')', 'g'), '\\frac{$1}{$2}');
+    t = t.replace(new RegExp('(' + ATOM + ')\\s*\\/\\s*\\(([^()]+)\\)', 'g'), '\\frac{$1}{$2}');
+    // 단순 분수 (√ 포함)
+    t = t.replace(new RegExp('(' + ATOM + ')\\s*\\/\\s*(' + ATOM + ')(?![\\/\\^])', 'g'), '\\frac{$1}{$2}');
     // 연산자
     t = t.replace(/×/g, '\\times ');
     t = t.replace(/÷/g, '\\div ');
@@ -1380,14 +1383,11 @@ function _fallbackFormatChunk(s) {
     t = t.replace(/√\(([^()]+)\)/g, '√<span class="sqrt-arg">$1</span>');
     t = t.replace(/√(\d+)/g, '√<span class="sqrt-arg">$1</span>');
     t = t.replace(/√([a-zA-Z])/g, '√<span class="sqrt-arg">$1</span>');
-    t = t.replace(/\(([^()]+)\)\/\(([^()]+)\)/g,
-        '<span class="frac"><span class="num">$1</span><span class="den">$2</span></span>');
-    t = t.replace(/\(([^()]+)\)\/(\d+|[a-zA-Z]+)/g,
-        '<span class="frac"><span class="num">$1</span><span class="den">$2</span></span>');
-    t = t.replace(/(\d+|[a-zA-Z]+)\/\(([^()]+)\)/g,
-        '<span class="frac"><span class="num">$1</span><span class="den">$2</span></span>');
-    t = t.replace(/(\d+|[a-zA-Z]+)\/(\d+|[a-zA-Z]+)(?![\/\^])/g,
-        '<span class="frac"><span class="num">$1</span><span class="den">$2</span></span>');
+    const FRAC_TPL = '<span class="frac"><span class="num">$1</span><span class="den">$2</span></span>';
+    t = t.replace(/\(([^()]+)\)\s*\/\s*\(([^()]+)\)/g, FRAC_TPL);
+    t = t.replace(/\(([^()]+)\)\s*\/\s*(\d+|[a-zA-Z]+)/g, FRAC_TPL);
+    t = t.replace(/(\d+|[a-zA-Z]+)\s*\/\s*\(([^()]+)\)/g, FRAC_TPL);
+    t = t.replace(/(\d+|[a-zA-Z]+)\s*\/\s*(\d+|[a-zA-Z]+)(?![\/\^])/g, FRAC_TPL);
     return t;
 }
 
