@@ -1162,17 +1162,9 @@ function escapeHTML(s) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-// 한글 vs 비한글로 토큰화하고 한글은 \text{}, 나머지는 수학식으로 변환
+// 한글/비한글 토큰화 → 수학 chunk 만 KaTeX 렌더
 function _isKoreanChar(ch) {
     return /[ㄱ-힝一-鿿]/.test(ch);
-}
-
-function _escapeLatexText(s) {
-    return s
-        .replace(/\\/g, '\\textbackslash ')
-        .replace(/[%&#_{}$]/g, c => '\\' + c)
-        .replace(/\^/g, '\\textasciicircum ')
-        .replace(/~/g, '\\textasciitilde ');
 }
 
 function _convertMathChunk(s) {
@@ -1209,7 +1201,7 @@ function _convertMathChunk(s) {
     return t;
 }
 
-function _toLatex(s) {
+function _tokenize(s) {
     const tokens = [];
     let buf = '';
     let inKorean = false;
@@ -1227,13 +1219,10 @@ function _toLatex(s) {
         }
     }
     if (buf) tokens.push({ korean: inKorean, text: buf });
-    return tokens.map(tok => {
-        if (tok.korean) return `\\text{${_escapeLatexText(tok.text)}}`;
-        return _convertMathChunk(tok.text);
-    }).join('');
+    return tokens;
 }
 
-function _fallbackFormatMath(s) {
+function _fallbackFormatChunk(s) {
     let t = escapeHTML(s);
     t = t.replace(/√\(([^()]+)\)/g, '√<span class="sqrt-arg">$1</span>');
     t = t.replace(/√(\d+)/g, '√<span class="sqrt-arg">$1</span>');
@@ -1249,11 +1238,23 @@ function _fallbackFormatMath(s) {
     return t;
 }
 
+// 한글 텍스트는 그대로(HTML escape), 수학 chunk 만 KaTeX 로 렌더.
+// 한글 부분은 정상적으로 줄바꿈 가능, 수학식은 한 덩어리로 줄에 들어감.
 function formatMath(s) {
     if (!s) return '';
-    if (typeof katex !== 'undefined') {
+    const tokens = _tokenize(s);
+
+    return tokens.map(tok => {
+        if (tok.korean) {
+            return escapeHTML(tok.text);
+        }
+        // 수학 chunk
+        if (typeof katex === 'undefined') {
+            return _fallbackFormatChunk(tok.text);
+        }
+        const latex = _convertMathChunk(tok.text);
+        if (!latex.trim()) return escapeHTML(tok.text);
         try {
-            const latex = _toLatex(s);
             return katex.renderToString(latex, {
                 throwOnError: false,
                 displayMode: false,
@@ -1261,10 +1262,9 @@ function formatMath(s) {
                 strict: false,
             });
         } catch (e) {
-            console.warn('KaTeX render fail:', e.message);
+            return _fallbackFormatChunk(tok.text);
         }
-    }
-    return _fallbackFormatMath(s);
+    }).join('');
 }
 
 function formatDate(iso) {

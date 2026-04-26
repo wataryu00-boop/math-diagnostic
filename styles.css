@@ -54,14 +54,15 @@ p { margin: 8px 0; }
 .header-row h1 { margin: 0; flex: 1; }
 
 .problem {
-    font-size: 21px;
-    padding: 18px 14px;
+    font-size: 17px;
+    padding: 14px 12px;
     background: #f8f9fb;
     border-radius: 10px;
     margin: 14px 0;
     text-align: center;
     overflow-x: auto;
     word-break: keep-all;
+    line-height: 1.7;
 }
 
 /* ─────────────────────────────────────────────
@@ -598,21 +599,26 @@ details summary:hover { color: #4a7eff; }
 .admin-link:hover { color: #4a7eff; text-decoration: underline; }
 
 /* ─────────────────────────────────────────────
- * KaTeX 수식
+ * KaTeX 수식 — 한 수식은 한 줄에 (개행 금지)
  * ───────────────────────────────────────────── */
-.katex { font-size: 1.05em; }
-.problem .katex { font-size: 1.15em; }
-.choice .katex, .history-item .katex, .solution .katex,
-.why-wrong .katex, .why-wrong-mini .katex, .inferred .katex {
-    font-size: 0.95em;
+.katex {
+    font-size: 1em;
+    display: inline-block;
+    white-space: nowrap;
+    vertical-align: middle;
+    max-width: 100%;
 }
-/* 긴 수식 줄바꿈 허용 */
+.katex-html { white-space: nowrap; }
+
+/* 한 수식 자체는 줄바꿈 X. 한글 텍스트와의 경계에서만 줄바꿈 */
 .problem, .choice-text, .history-item, .solution,
 .why-wrong, .why-wrong-mini, .inferred {
     overflow-wrap: break-word;
-    word-break: break-word;
+    word-break: keep-all;
 }
-.katex-html { white-space: normal; }
+
+/* 긴 수식이 컨테이너 폭 초과 시 가로 스크롤 */
+.problem { overflow-x: auto; }
 
 /* ─────────────────────────────────────────────
  * 수식 — 분수 / 루트 (KaTeX 미로드 시 폴백)
@@ -651,6 +657,6 @@ details summary:hover { color: #4a7eff; }
     h1 { font-size: 28px; }
     h2 { font-size: 22px; }
     h3 { font-size: 17px; }
-    .problem { font-size: 22px; padding: 20px; }
+    .problem { font-size: 18px; padding: 16px; }
     button { min-height: 44px; padding: 12px 22px; }
 }
