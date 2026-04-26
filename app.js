@@ -1239,32 +1239,45 @@ function _fallbackFormatChunk(s) {
 }
 
 // 한글 텍스트는 그대로(HTML escape), 수학 chunk 만 KaTeX 로 렌더.
-// 한글 부분은 정상적으로 줄바꿈 가능, 수학식은 한 덩어리로 줄에 들어감.
+// 한글 ↔ 수식 경계에 자동으로 공백 삽입.
 function formatMath(s) {
     if (!s) return '';
     const tokens = _tokenize(s);
+    let result = '';
+    let lastKind = null;
 
-    return tokens.map(tok => {
+    for (const tok of tokens) {
+        let html, kind;
         if (tok.korean) {
-            return escapeHTML(tok.text);
+            html = escapeHTML(tok.text.trim());
+            if (!html) continue;
+            kind = 'korean';
+        } else {
+            const core = tok.text.trim();
+            if (!core) continue;
+            kind = 'math';
+            if (typeof katex === 'undefined') {
+                html = _fallbackFormatChunk(core);
+            } else {
+                const latex = _convertMathChunk(core);
+                try {
+                    html = katex.renderToString(latex, {
+                        throwOnError: false,
+                        displayMode: false,
+                        output: 'html',
+                        strict: false,
+                    });
+                } catch (e) {
+                    html = _fallbackFormatChunk(core);
+                }
+            }
         }
-        // 수학 chunk
-        if (typeof katex === 'undefined') {
-            return _fallbackFormatChunk(tok.text);
-        }
-        const latex = _convertMathChunk(tok.text);
-        if (!latex.trim()) return escapeHTML(tok.text);
-        try {
-            return katex.renderToString(latex, {
-                throwOnError: false,
-                displayMode: false,
-                output: 'html',
-                strict: false,
-            });
-        } catch (e) {
-            return _fallbackFormatChunk(tok.text);
-        }
-    }).join('');
+        // 경계에서만 공백 추가 (한글↔수식 또는 같은 종류라도 한글 사이엔 어차피 자체 공백)
+        if (lastKind !== null) result += ' ';
+        result += html;
+        lastKind = kind;
+    }
+    return result;
 }
 
 function formatDate(iso) {
