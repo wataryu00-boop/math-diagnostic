@@ -48,6 +48,17 @@ const DIAGNOSTIC_BATTERY = [
     'B02', 'H03', 'G02', 'V01'                          // 부등식 / 함수 / 좌표 / 유리식
 ];
 const MAX_DX_QUESTIONS = 18;
+
+// 학년 빠른 추정용 anchors — 학년별 한 개씩 (이분 탐색)
+// log2(6) ≈ 3 문제 안에 학년 구간이 좁혀짐
+const GRADE_ANCHORS = [
+    { grade: 5,  conceptId: 'F04' },  // 초5  분수의 덧셈·뺄셈
+    { grade: 6,  conceptId: 'F06' },  // 초6  소수↔분수 변환
+    { grade: 7,  conceptId: 'I05' },  // 중1  유리수의 사칙연산
+    { grade: 8,  conceptId: 'F07' },  // 중2  순환소수
+    { grade: 9,  conceptId: 'P07' },  // 중3  이차식 인수분해
+    { grade: 10, conceptId: 'V01' },  // 고1  유리식의 약분
+];
 const CIRCLED = ['①','②','③','④','⑤'];
 
 // ─────────────────────────────────────────────────────────
@@ -962,9 +973,11 @@ function buildDynamicBattery() {
 
 function startDiagnosis() {
     state.mode = 'dx';
-    const battery = buildDynamicBattery();
     state.dx = {
-        queue: battery,
+        phase: 'gradeSearch',  // 'gradeSearch' → 'concept'
+        bracket: { low: 0, high: GRADE_ANCHORS.length - 1, lastCorrectIdx: -1, currentMid: null, anchorsAsked: 0 },
+        bracketEstimate: null,  // 빠른 학년 추정 (이분 탐색 결과)
+        queue: [],  // phase 2 진입 시 buildDynamicBattery 로 채움
         asked: new Set(),
         wrongConcepts: new Set(),
         history: [],
@@ -977,6 +990,18 @@ function startDiagnosis() {
     nextDxQuestion();
 }
 
+function _finalizeBracketEstimate() {
+    const idx = state.dx.bracket.lastCorrectIdx;
+    // lastCorrectIdx >= 0 → 그 anchor 학년 수준에 도달
+    // -1 (어떤 anchor 도 못 풀음) → 가장 낮은 anchor 학년 미만 (null 로 남김)
+    state.dx.bracketEstimate = idx >= 0 ? GRADE_ANCHORS[idx].grade : null;
+}
+
+function _transitionToConceptPhase() {
+    state.dx.phase = 'concept';
+    state.dx.queue = buildDynamicBattery();
+}
+
 function nextDxQuestion() {
     state.dx.showingFeedback = false;
     state.dx.selectedIndex = null;
@@ -987,6 +1012,36 @@ function nextDxQuestion() {
         return;
     }
 
+    // Phase 1: 학년 빠른 추정 (이분 탐색)
+    if (state.dx.phase === 'gradeSearch') {
+        const b = state.dx.bracket;
+        if (b.low > b.high || b.anchorsAsked >= GRADE_ANCHORS.length) {
+            // 범위 좁혀졌으면 추정 확정 후 phase 2 로 전환
+            _finalizeBracketEstimate();
+            _transitionToConceptPhase();
+            // 아래 phase 2 로직으로 이어짐
+        } else {
+            const mid = (b.low + b.high) >> 1;
+            const anchor = GRADE_ANCHORS[mid];
+            // 일관된 난이도 2 로 이분 탐색 (mastery 영향 X)
+            const problem = pickProblem(anchor.conceptId, { diagnostic: true, targetLevel: 2 });
+            if (problem) {
+                b.currentMid = mid;
+                state.dx.currentProblem = problem;
+                state.dx.currentChoices = buildChoices(problem);
+                state.dx.asked.add(problem['문제ID']);
+                saveDxToCloud();
+                render();
+                return;
+            } else {
+                // anchor 에 풀 문제 없으면 phase 1 종료
+                _finalizeBracketEstimate();
+                _transitionToConceptPhase();
+            }
+        }
+    }
+
+    // Phase 2: 기존 개념 배터리
     while (state.dx.queue.length > 0) {
         const conceptId = state.dx.queue.shift();
         const alreadyTested = state.dx.history.some(h => h.conceptId === conceptId);
@@ -1024,14 +1079,30 @@ function submitDxAnswer() {
         inferred = chosen.weakness || problem['점검개념ID'];
         state.dx.lastInferred = inferred;
         state.dx.wrongConcepts.add(inferred);
-        for (const pre of getPrereqs(inferred)) {
-            const alreadyTested = state.dx.history.some(h => h.conceptId === pre);
-            if (state.dx.queue.includes(pre) || alreadyTested) continue;
-            // 마스터된 선수 개념은 드릴다운에서 건너뜀 (오개념 의심 안 함)
-            const m = state.mastery?.[pre];
-            if (m && getMasteryStatus(m) === 'mastered') continue;
-            state.dx.queue.push(pre);
+        // Phase 1 (이분 탐색) 중에는 선수 개념 드릴다운 건너뜀
+        if (state.dx.phase === 'concept') {
+            for (const pre of getPrereqs(inferred)) {
+                const alreadyTested = state.dx.history.some(h => h.conceptId === pre);
+                if (state.dx.queue.includes(pre) || alreadyTested) continue;
+                // 마스터된 선수 개념은 드릴다운에서 건너뜀 (오개념 의심 안 함)
+                const m = state.mastery?.[pre];
+                if (m && getMasteryStatus(m) === 'mastered') continue;
+                state.dx.queue.push(pre);
+            }
         }
+    }
+
+    // Phase 1 이분 탐색 bracket 갱신
+    if (state.dx.phase === 'gradeSearch') {
+        const b = state.dx.bracket;
+        const mid = b.currentMid;
+        if (correct) {
+            b.lastCorrectIdx = mid;
+            b.low = mid + 1;
+        } else {
+            b.high = mid - 1;
+        }
+        b.anchorsAsked++;
     }
 
     state.dx.history.push({
@@ -1069,12 +1140,22 @@ function skipDxAnswer() {
     state.dx.showingFeedback = true;
     state.dx.lastInferred = inferred;
     state.dx.wrongConcepts.add(inferred);
-    for (const pre of getPrereqs(inferred)) {
-        const alreadyTested = state.dx.history.some(h => h.conceptId === pre);
-        if (state.dx.queue.includes(pre) || alreadyTested) continue;
-        const m = state.mastery?.[pre];
-        if (m && getMasteryStatus(m) === 'mastered') continue;
-        state.dx.queue.push(pre);
+    // Phase 1 중에는 드릴다운 건너뜀
+    if (state.dx.phase === 'concept') {
+        for (const pre of getPrereqs(inferred)) {
+            const alreadyTested = state.dx.history.some(h => h.conceptId === pre);
+            if (state.dx.queue.includes(pre) || alreadyTested) continue;
+            const m = state.mastery?.[pre];
+            if (m && getMasteryStatus(m) === 'mastered') continue;
+            state.dx.queue.push(pre);
+        }
+    }
+    // Phase 1 이분 탐색 bracket 갱신 (모름 = 오답)
+    if (state.dx.phase === 'gradeSearch') {
+        const b = state.dx.bracket;
+        const mid = b.currentMid;
+        b.high = mid - 1;
+        b.anchorsAsked++;
     }
     state.dx.history.push({
         problemId: problem['문제ID'],
@@ -1696,7 +1777,8 @@ function renderDx() {
         return `
             <div class="card">
                 <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
-                <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검</div>
+                <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검${dx.phase === 'gradeSearch' ? ' · <span style="color:#0a7">빠른 학년 추정 중</span>' : ''}</div>
+                ${dx.bracketEstimate !== null ? `<div class="meta" style="margin-top:4px">📊 빠른 추정: <b>${_gradeLabel(dx.bracketEstimate)} 수준</b> (이후 자세한 진단 진행 중)</div>` : ''}
                 <div class="problem">${formatMath(p['문제'])}</div>
                 ${renderChoices(dx.currentChoices, dx.selectedIndex, false, 'selectDxChoice')}
                 <button class="primary block" onclick="submitDxAnswer()" ${dx.selectedIndex === null ? 'disabled' : ''}>확인</button>
@@ -1713,7 +1795,8 @@ function renderDx() {
             return `
                 <div class="card">
                     <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
-                    <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검</div>
+                    <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검${dx.phase === 'gradeSearch' ? ' · <span style="color:#0a7">빠른 학년 추정 중</span>' : ''}</div>
+                ${dx.bracketEstimate !== null ? `<div class="meta" style="margin-top:4px">📊 빠른 추정: <b>${_gradeLabel(dx.bracketEstimate)} 수준</b> (이후 자세한 진단 진행 중)</div>` : ''}
                     <div class="problem">${formatMath(p['문제'])}</div>
                     ${renderChoices(dx.currentChoices, dx.selectedIndex, true, 'selectDxChoice')}
                     <div class="correct correct-flash">✓ 정답입니다!</div>
@@ -1724,7 +1807,8 @@ function renderDx() {
         return `
             <div class="card">
                 <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
-                <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검</div>
+                <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검${dx.phase === 'gradeSearch' ? ' · <span style="color:#0a7">빠른 학년 추정 중</span>' : ''}</div>
+                ${dx.bracketEstimate !== null ? `<div class="meta" style="margin-top:4px">📊 빠른 추정: <b>${_gradeLabel(dx.bracketEstimate)} 수준</b> (이후 자세한 진단 진행 중)</div>` : ''}
                 <div class="problem">${formatMath(p['문제'])}</div>
                 ${renderChoices(dx.currentChoices, dx.selectedIndex, true, 'selectDxChoice')}
                 <div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>
@@ -1770,6 +1854,7 @@ function renderResult() {
         <div class="card">
             <h2>📊 진단 결과</h2>
             <p>점수: <b>${correctCount} / ${total}</b></p>
+            ${dx.bracketEstimate !== null ? `<p class="grade-estimate">🎓 빠른 학년 추정: <b>${_gradeLabel(dx.bracketEstimate)} 수준</b> <span class="meta">(이분 탐색 ${GRADE_ANCHORS.length} 개 anchor 중 ${dx.bracket?.anchorsAsked || 0} 문제로 추정)</span></p>` : ''}
             <p class="meta">결과는 ${escapeHTML(getDisplayName())} 님 계정에 저장되었습니다.</p>
 
             ${weak.length === 0 && suspected.length === 0 ? `
