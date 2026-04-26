@@ -471,16 +471,21 @@ async function savePracticeToCloud() {
 async function recordSession() {
     if (!state.user || !state.dx) return;
     const dx = state.dx;
-    const { error } = await sb.from('sessions').insert({
+    const newSession = {
         user_id: state.user.id,
         score: dx.history.filter(h => h.correct).length,
         total: dx.history.length,
         weak_concepts: [...dx.wrongConcepts],
         root_concepts: findRootWeaknesses(),
         history: dx.history,
-    });
+    };
+    const { error } = await sb.from('sessions').insert(newSession);
     if (error) console.error('세션 저장 실패', error);
     state.sessionCount += 1;
+    // 메인 화면의 학년 추정·통계가 즉시 반영되도록 in-memory sessions 에도 push
+    if (Array.isArray(state.sessions)) {
+        state.sessions.unshift({ ...newSession, finished_at: new Date().toISOString() });
+    }
     // 진행 중 데이터 비우기
     state.dx = null;
     await saveDxToCloud();
@@ -562,15 +567,38 @@ function estimateGradeLevel(mastery) {
     return { grades, estimate };
 }
 
+// 과거 세션 history 에서 학생이 정답한 anchor 중 가장 높은 학년 도출
+// (이분 탐색 phase 1 결과 + phase 2 에서 정답한 anchor 모두 반영)
+function computeBracketEstimateFromSessions(sessions) {
+    let highestIdx = -1;
+    for (const s of (sessions || [])) {
+        const hist = Array.isArray(s.history) ? s.history : [];
+        for (const h of hist) {
+            const aIdx = GRADE_ANCHORS.findIndex(a => a.conceptId === h.conceptId);
+            if (aIdx >= 0 && h.correct) {
+                if (aIdx > highestIdx) highestIdx = aIdx;
+            }
+        }
+    }
+    return highestIdx >= 0 ? GRADE_ANCHORS[highestIdx].grade : null;
+}
+
 function renderGradeProgress(mastery) {
     const { grades, estimate } = estimateGradeLevel(mastery);
-    if (grades.length === 0) return '';
+    const bracketGrade = computeBracketEstimateFromSessions(state.sessions);
+    if (grades.length === 0 && bracketGrade === null) return '';
+    let estimateLine;
+    if (estimate) {
+        estimateLine = `현재 추정 도달 학년: <b>${estimate.label} 수준</b> (그 학년 개념 ${Math.round(estimate.ratio * 100)}% 마스터)`;
+    } else if (bracketGrade !== null) {
+        estimateLine = `빠른 추정 학년: <b>${_gradeLabel(bracketGrade)} 수준</b> <span class="meta">(이분 탐색 기반 — 더 풀수록 정확도 향상)</span>`;
+    } else {
+        estimateLine = `학년 도달 추정 — <span class="meta">아직 70% 마스터한 학년이 없어요</span>`;
+    }
     return `
         <div class="grade-progress-wrap">
             <div class="grade-estimate">
-                🎓 ${estimate
-                    ? `현재 추정 도달 학년: <b>${estimate.label} 수준</b> (그 학년 개념 ${Math.round(estimate.ratio * 100)}% 마스터)`
-                    : `학년 도달 추정 — <span class="meta">아직 70% 마스터한 학년이 없어요</span>`}
+                🎓 ${estimateLine}
             </div>
             <details class="grade-detail">
                 <summary class="meta">학년별 진척도 보기</summary>
