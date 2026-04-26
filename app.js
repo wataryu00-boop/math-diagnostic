@@ -1371,7 +1371,15 @@ function resumeProgress() {
         state.mode = 'practice';
     } else if (ip.current_dx) {
         const dx = ip.current_dx;
-        state.dx = { ...dx, asked: new Set(dx.asked || []), wrongConcepts: new Set(dx.wrongConcepts || []) };
+        state.dx = {
+            ...dx,
+            asked: new Set(dx.asked || []),
+            wrongConcepts: new Set(dx.wrongConcepts || []),
+            // 구버전 호환: phase 가 없으면 기존 동적 배터리 흐름으로 (phase 1 건너뜀)
+            phase: dx.phase || 'concept',
+            bracket: dx.bracket || null,
+            bracketEstimate: dx.bracketEstimate ?? null,
+        };
         state.mode = 'dx';
     }
     render();
