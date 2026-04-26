@@ -298,11 +298,12 @@ async function loadUserContext() {
     } else {
         const [ip, allSessions, masteryRes] = await Promise.all([
             sb.from('in_progress').select('current_dx, current_practice').eq('user_id', state.user.id).maybeSingle(),
-            sb.from('sessions').select('id, kind').eq('user_id', state.user.id),
+            sb.from('sessions').select('id, kind, finished_at, score, total, weak_concepts, root_concepts, history, concept_id').eq('user_id', state.user.id).order('finished_at', { ascending: false }),
             sb.from('concept_mastery').select('*').eq('user_id', state.user.id),
         ]);
         state.inProgress = ip.data || { current_dx: null, current_practice: null };
         const sessList = allSessions.data || [];
+        state.sessions = sessList;
         state.sessionCount = sessList.filter(s => s.kind !== 'practice').length;
         state.practiceCount = sessList.filter(s => s.kind === 'practice').length;
         state.teacherData = null;
@@ -465,6 +466,26 @@ function getMasteryLevel(m) {
     return 2; // unknown / developing
 }
 
+// 매력 오답으로 추정된 (직접 풀어 보지 않은) 개념을 sessions 기록에서 집계.
+// 직접 풀어 mastery 데이터(total_seen >= 1)가 있는 개념은 이미 확정됐으므로 제외.
+function computeSuspectedConcepts(sessions, mastery) {
+    const cById = state.conceptsById;
+    const counts = new Map();
+    for (const sess of (sessions || [])) {
+        for (const h of (sess.history || [])) {
+            if (h.correct) continue;
+            const cid = h.inferred;
+            if (!cid || !cById[cid]) continue;
+            const m = mastery?.[cid];
+            if (m && (m.total_seen || 0) > 0) continue; // 직접 풀이로 데이터 있음 — 추정 불필요
+            counts.set(cid, (counts.get(cid) || 0) + 1);
+        }
+    }
+    return [...counts.entries()]
+        .map(([cid, count]) => ({ cid, count }))
+        .sort((a, b) => b.count - a.count);
+}
+
 function shouldTestInBattery(conceptId) {
     const m = state.mastery?.[conceptId];
     if (!m) return true;
@@ -575,6 +596,7 @@ function renderMasteryList(category) {
         developing: '📈 학습 중인 개념',
         weak: '⚠️ 약점 개념',
         untouched: '📋 아직 안 풀어본 개념',
+        suspected: '🔍 매력 오답으로 추정된 개념',
     };
 
     let items = [];
@@ -582,6 +604,11 @@ function renderMasteryList(category) {
         items = concepts
             .filter(c => !mastery[c['개념ID']] || (mastery[c['개념ID']]?.total_seen || 0) === 0)
             .map(c => ({ cid: c['개념ID'], c, m: null }));
+    } else if (category === 'suspected') {
+        const suspected = computeSuspectedConcepts(state.sessions, mastery);
+        items = suspected.map(({ cid, count }) => ({
+            cid, c: state.conceptsById[cid], m: null, suspectedCount: count,
+        }));
     } else {
         items = Object.keys(mastery)
             .filter(cid => state.conceptsById[cid])
@@ -624,12 +651,14 @@ function renderMasteryList(category) {
                 <div class="area-group">
                     <div class="area-group-label">${escapeHTML(area)} (${list.length})</div>
                     <ul class="weakness-list">
-                        ${list.map(({ cid, c, m }) => {
+                        ${list.map(({ cid, c, m, suspectedCount }) => {
                             const name = c?.['개념명'] || cid;
                             let extra = '';
                             if (m && m.total_seen > 0) {
                                 const acc = Math.round((m.total_correct / m.total_seen) * 100);
                                 extra = ` · 정답률 ${acc}% · 연속 ${m.correct_streak}회`;
+                            } else if (suspectedCount) {
+                                extra = ` · 매력 오답 ${suspectedCount}회 시사`;
                             }
                             return `<li class="student-row" onclick="studyConcept('${cid}')">
                                 <b>${escapeHTML(name)}</b>
@@ -1427,6 +1456,14 @@ function renderWelcome() {
                     <div class="m-stat m-weak ${state.masteryListFilter === 'weak' ? 'active' : ''}" onclick="toggleMasteryList('weak')"><b>${weak}</b><span>⚠️ 약점</span></div>
                     <div class="m-stat m-untouched ${state.masteryListFilter === 'untouched' ? 'active' : ''}" onclick="toggleMasteryList('untouched')"><b>${untouched}</b><span>📋 미시도</span></div>
                 </div>
+                ${(() => {
+                    const suspected = computeSuspectedConcepts(state.sessions, mastery);
+                    if (suspected.length === 0) return '';
+                    const open = state.masteryListFilter === 'suspected';
+                    return `<div class="suspected-banner ${open ? 'active' : ''}" onclick="toggleMasteryList('suspected')">
+                        🔍 매력 오답으로 추정된 개념 <b>${suspected.length}개</b> · 직접 풀어보면 확정 ${open ? '▴' : '▾'}
+                    </div>`;
+                })()}
                 ${state.masteryListFilter ? renderMasteryList(state.masteryListFilter) : ''}
 
                 <h3>영역별 진척도</h3>
@@ -1871,6 +1908,21 @@ function renderTeacherDashboard() {
     const totalSessions = td.totalSessions;
     const top = td.classWeak.slice(0, 10);
 
+    // 반 전체 추정 약점 — 학생별 추정 합산 (학생 수 기준)
+    const studentsBySuspected = {};
+    for (const stu of td.students) {
+        const sList = td.sessionsByUser.get(stu.id) || [];
+        const sm = td.masteryByUser?.[stu.id] || {};
+        const suspected = computeSuspectedConcepts(sList, sm);
+        for (const { cid } of suspected) {
+            studentsBySuspected[cid] = (studentsBySuspected[cid] || 0) + 1;
+        }
+    }
+    const classSuspected = Object.entries(studentsBySuspected)
+        .map(([cid, count]) => ({ cid, count }))
+        .sort((a, b) => b.count - a.count)
+        .slice(0, 10);
+
     return `
         <div class="card">
             <div class="header-row">
@@ -1903,6 +1955,23 @@ function renderTeacherDashboard() {
                         </li>`;
                     }).join('')}
                 </ul>`}
+
+            ${classSuspected.length > 0 ? `
+                <h3>🔍 매력 오답으로 추정된 개념 (직접 풀이 미실시)</h3>
+                <p class="meta">학생들이 매력 오답을 골라 시사된 개념. 미시도 상태라 다음 진단에서 직접 풀어봐야 확정.</p>
+                <ul class="weakness-list">
+                    ${classSuspected.map((w, i) => {
+                        const c = state.conceptsById[w.cid];
+                        const name = c ? c['개념명'] : w.cid;
+                        const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
+                        return `<li>
+                            <b>${i+1}. ${escapeHTML(name)}</b>
+                            <span class="meta">— ${w.count}명 (${pct}%)</span>
+                            <div class="bar"><div class="bar-fill" style="width:${pct}%; background:#a8a8a8"></div></div>
+                        </li>`;
+                    }).join('')}
+                </ul>
+            ` : ''}
 
             <h3>👥 학생 목록 (${studentCount}명)</h3>
             ${studentCount === 0 ? '<p class="meta">아직 가입한 학생이 없어요.</p>' : `
@@ -2006,6 +2075,25 @@ function renderTeacherStudent() {
                         }).join('')}
                     </ul>
                 ` : '<p class="meta">현재 어려움을 겪는 개념이 없어요. 잘하고 있어요!</p>'}
+
+                ${(() => {
+                    const susp = computeSuspectedConcepts(studentSessions, sm);
+                    if (susp.length === 0) return '';
+                    return `
+                        <h3>🔍 매력 오답으로 추정된 개념 (${susp.length}개)</h3>
+                        <p class="meta">학생이 매력 오답을 골라 시사된 개념. 직접 풀이로 확정된 데이터는 없음.</p>
+                        <ul class="weakness-list">
+                            ${susp.map(({ cid, count }) => {
+                                const c = state.conceptsById[cid];
+                                const name = c ? c['개념명'] : cid;
+                                return `<li>
+                                    <b>${escapeHTML(name)}</b>
+                                    <span class="meta">${cid} · 매력 오답 ${count}회 시사</span>
+                                </li>`;
+                            }).join('')}
+                        </ul>
+                    `;
+                })()}
 
                 <h3>풀이 이력 (진단 + 학습)</h3>
                 <ul class="weakness-list">

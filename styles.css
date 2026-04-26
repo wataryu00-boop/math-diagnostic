@@ -401,6 +401,25 @@ button.link-btn {
     font-size: 10px;
 }
 
+/* 추정 약점 배너 (클릭 가능) */
+.suspected-banner {
+    background: #f0f4ff;
+    border: 1px solid #c5d2f0;
+    border-left: 3px solid #6b8aff;
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin: 0 0 14px;
+    font-size: 14px;
+    color: #2540a8;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.suspected-banner:hover { background: #e8eeff; }
+.suspected-banner.active {
+    background: #e0e8ff;
+    border-color: #6b8aff;
+}
+
 /* 카테고리별 개념 목록 */
 .mastery-list-detail {
     background: #f8f9fb;
