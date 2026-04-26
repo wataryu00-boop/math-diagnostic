@@ -1182,6 +1182,10 @@ function _convertMathChunk(s) {
     for (let i = 0; i < 10; i++) {
         t = t.split(supers[i]).join(`^{${i}}`);
     }
+    // 좌표·순서쌍: (a b) → (a, b)   — 콤마 없이 공백으로 구분된 두 항목 처리
+    // 3-tuple: (a b c) → (a, b, c) 도 처리
+    t = t.replace(/\(([+-]?\d+(?:\.\d+)?|[a-zA-Z])\s+([+-]?\d+(?:\.\d+)?|[a-zA-Z])\s+([+-]?\d+(?:\.\d+)?|[a-zA-Z])\)/g, '($1,\\ $2,\\ $3)');
+    t = t.replace(/\(([+-]?\d+(?:\.\d+)?|[a-zA-Z])\s+([+-]?\d+(?:\.\d+)?|[a-zA-Z])\)/g, '($1,\\ $2)');
     // 루트
     t = t.replace(/√\(([^()]+)\)/g, '\\sqrt{$1}');
     t = t.replace(/√(\d+)/g, '\\sqrt{$1}');
