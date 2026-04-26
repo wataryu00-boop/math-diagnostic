@@ -351,12 +351,17 @@ async function loadTeacherData() {
     }
     const studentList = students.map(p => {
         const userSessions = sessionsByUser.get(p.id) || [];
-        const allWeak = userSessions.flatMap(s => s.weak_concepts || []);
+        const sm = masteryByUser[p.id] || {};
+        // 현재 mastery 가 'weak' 인 개념 수 (직접 풀어 약점이 된 것만, 과거 추정 제외)
+        const currentWeakCount = Object.keys(sm)
+            .filter(cid => state.conceptsById[cid])
+            .filter(cid => getMasteryStatus(sm[cid]) === 'weak')
+            .length;
         return {
             ...p,
             sessionCount: userSessions.length,
             lastSession: userSessions[0] || null,
-            uniqueWeakCount: new Set(allWeak).size,
+            uniqueWeakCount: currentWeakCount,
         };
     }).sort((a, b) => {
         // 최근 진단 본 학생 먼저
