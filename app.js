@@ -363,12 +363,17 @@ async function loadTeacherData() {
         return bt - at;
     });
 
-    // 반 전체 약점 빈도 (학생 단위 — 한 학생이 같은 약점 여러 번 진단해도 1로 셈)
+    // 반 전체 "현재 약점" — 학생별 mastery 'weak' 상태인 개념을 학생 수로 집계
+    // (과거 누적 X, 직접 풀어 mastery 가 weak 가 된 경우만)
     const studentsWithWeakness = {};
-    for (const [uid, sList] of sessionsByUser.entries()) {
-        if (!profileById[uid] || profileById[uid].role !== 'student') continue;
-        const studentWeak = new Set(sList.flatMap(s => s.weak_concepts || []));
-        for (const w of studentWeak) studentsWithWeakness[w] = (studentsWithWeakness[w] || 0) + 1;
+    for (const p of allProfiles) {
+        if (p.role !== 'student') continue;
+        const mast = masteryByUser[p.id] || {};
+        for (const cid of Object.keys(mast)) {
+            if (!state.conceptsById[cid]) continue;
+            if (getMasteryStatus(mast[cid]) !== 'weak') continue;
+            studentsWithWeakness[cid] = (studentsWithWeakness[cid] || 0) + 1;
+        }
     }
     const classWeak = Object.entries(studentsWithWeakness)
         .map(([cid, count]) => ({ cid, count }))
@@ -1876,14 +1881,14 @@ function renderTeacherDashboard() {
             <div class="stats-row">
                 <div class="stat"><b>${studentCount}</b><span class="meta">학생</span></div>
                 <div class="stat"><b>${totalSessions}</b><span class="meta">진단 누적</span></div>
-                <div class="stat"><b>${td.classWeak.length}</b><span class="meta">발견된 개념 약점</span></div>
+                <div class="stat"><b>${td.classWeak.length}</b><span class="meta">현재 약점 개념</span></div>
             </div>
 
             <button class="link-btn" onclick="refreshTeacherData()" style="float:right;margin-top:-8px">↻ 새로고침</button>
 
             <button class="block" onclick="viewProblemBank()" style="margin-top:8px">📚 문제 은행 둘러보기</button>
 
-            <h3>🔥 우리반 자주 막히는 개념 (학생 수 기준)</h3>
+            <h3>🔥 현재 우리반이 어려워하는 개념 (학생 수 기준)</h3>
             ${top.length === 0
                 ? '<p class="meta">아직 진단 데이터가 없어요.</p>'
                 : `<ul class="weakness-list">
@@ -1927,22 +1932,22 @@ function renderTeacherStudent() {
     if (!student) return '<div class="card"><p>학생 정보 없음.</p><button onclick="backToTeacherDashboard()">대시보드로</button></div>';
 
     const studentSessions = td.sessionsByUser.get(sid) || [];
-    // 누적 약점 빈도
-    const weakFreq = {};
-    for (const s of studentSessions) {
-        for (const w of (s.weak_concepts || [])) {
-            weakFreq[w] = (weakFreq[w] || 0) + 1;
-        }
-    }
-    const weakSorted = Object.entries(weakFreq).sort((a, b) => b[1] - a[1]);
 
-    // 학생 mastery 정보
+    // 학생 mastery 정보 (orphan 개념 제외)
     const sm = td.masteryByUser?.[sid] || {};
     const masteryByStatus = { mastered: [], developing: [], weak: [], unknown: [] };
     for (const cid of Object.keys(sm)) {
+        if (!state.conceptsById[cid]) continue;
         const status = getMasteryStatus(sm[cid]);
         masteryByStatus[status].push({ cid, m: sm[cid] });
     }
+    // 현재 약점 — 정답률 낮은 순
+    const currentWeak = masteryByStatus.weak
+        .map(({ cid, m }) => ({
+            cid, m,
+            acc: m.total_seen ? m.total_correct / m.total_seen : 0,
+        }))
+        .sort((a, b) => a.acc - b.acc);
 
     return `
         <div class="card">
@@ -1986,18 +1991,21 @@ function renderTeacherStudent() {
                 }).join('')}
             ` : ''}
 
-            ${weakSorted.length === 0 ? '<p>아직 진단 데이터가 없어요.</p>' : `
-                <h3>누적 약점 (자주 틀린 순)</h3>
-                <ul class="weakness-list">
-                    ${weakSorted.map(([cid, count]) => {
-                        const c = state.conceptsById[cid];
-                        const name = c ? c['개념명'] : cid;
-                        return `<li>
-                            <b>${escapeHTML(name)}</b>
-                            <span class="meta">${cid} · ${count}회 진단에서 약함</span>
-                        </li>`;
-                    }).join('')}
-                </ul>
+            ${studentSessions.length === 0 ? '<p>아직 진단 데이터가 없어요.</p>' : `
+                ${currentWeak.length > 0 ? `
+                    <h3>⚠️ 현재 어려움을 겪는 개념 (${currentWeak.length}개)</h3>
+                    <p class="meta">직접 풀어 mastery 가 weak 가 된 개념. 정답률 낮은 순.</p>
+                    <ul class="weakness-list">
+                        ${currentWeak.map(({ cid, m, acc }) => {
+                            const c = state.conceptsById[cid];
+                            const name = c ? c['개념명'] : cid;
+                            return `<li>
+                                <b>${escapeHTML(name)}</b>
+                                <span class="meta">${cid} · 정답률 ${Math.round(acc * 100)}% (${m.total_correct}/${m.total_seen}) · 연속 ${m.correct_streak}회</span>
+                            </li>`;
+                        }).join('')}
+                    </ul>
+                ` : '<p class="meta">현재 어려움을 겪는 개념이 없어요. 잘하고 있어요!</p>'}
 
                 <h3>풀이 이력 (진단 + 학습)</h3>
                 <ul class="weakness-list">
