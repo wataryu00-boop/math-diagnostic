@@ -585,6 +585,48 @@ function computeBracketEstimateFromSessions(sessions) {
     return highestIdx >= 0 ? GRADE_ANCHORS[highestIdx].grade : null;
 }
 
+// 마스터 임박 — 한 번만 더 맞히면 mastered 가 되는 개념들
+function findAlmostMastered(mastery) {
+    const target = MASTERY_THRESHOLD - 1;
+    const out = [];
+    for (const cid of Object.keys(mastery || {})) {
+        const c = state.conceptsById?.[cid];
+        if (!c) continue;
+        const m = mastery[cid];
+        if ((m.correct_streak || 0) === target) {
+            out.push({ cid, name: c['개념명'] || cid, grade: c['학년단계'] || '' });
+        }
+    }
+    return out;
+}
+
+// 다음 학년 진척 — 현재 추정 학년 바로 위 학년에서 마스터해야 할 개념 수 / 총 개념 수
+function findNextGradeProgress(mastery) {
+    const { estimate } = estimateGradeLevel(mastery);
+    const currentGrade = estimate ? estimate.grade : (computeBracketEstimateFromSessions(state.sessions) ?? 4);
+    // 현재 추정보다 높은 학년 중 가장 가까운 학년
+    const concepts = state.concepts || [];
+    const byGrade = new Map();
+    for (const c of concepts) {
+        const g = _gradeNum(c['학년단계']);
+        if (g === null || g <= currentGrade) continue;
+        if (!byGrade.has(g)) byGrade.set(g, []);
+        byGrade.get(g).push(c);
+    }
+    if (byGrade.size === 0) return null;
+    const nextGrade = Math.min(...byGrade.keys());
+    const list = byGrade.get(nextGrade);
+    let mastered = 0;
+    for (const c of list) {
+        if (getMasteryStatus(mastery?.[c['개념ID']]) === 'mastered') mastered++;
+    }
+    // 추정 도달 기준: ratio >= 0.7 이고 total >= 2
+    const total = list.length;
+    const targetMastered = Math.max(2, Math.ceil(total * 0.7));
+    const remaining = Math.max(0, targetMastered - mastered);
+    return { grade: nextGrade, label: _gradeLabel(nextGrade), mastered, total, targetMastered, remaining };
+}
+
 function renderGradeProgress(mastery) {
     const { grades, estimate } = estimateGradeLevel(mastery);
     const bracketGrade = computeBracketEstimateFromSessions(state.sessions);
@@ -1759,6 +1801,35 @@ function renderWelcome() {
                     <div class="m-stat m-untouched ${state.masteryListFilter === 'untouched' ? 'active' : ''}" onclick="toggleMasteryList('untouched')"><b>${untouched}</b><span>📋 미시도</span></div>
                 </div>
                 ${renderGradeProgress(mastery)}
+                ${(() => {
+                    const almost = findAlmostMastered(mastery);
+                    if (almost.length === 0) return '';
+                    const top = almost.slice(0, 3);
+                    const more = almost.length - top.length;
+                    return `<div class="motivation-card almost-mastered">
+                        <div class="motiv-title">⭐ 한 문제만 더 맞히면 마스터!</div>
+                        <div class="motiv-list">
+                            ${top.map(a => `<button class="motiv-chip" onclick="startPractice('${a.cid}')">${escapeHTML(a.name)}</button>`).join('')}
+                            ${more > 0 ? `<span class="motiv-more">외 ${more}개</span>` : ''}
+                        </div>
+                    </div>`;
+                })()}
+                ${(() => {
+                    const np = findNextGradeProgress(mastery);
+                    if (!np) return '';
+                    if (np.remaining === 0) {
+                        return `<div class="motivation-card next-grade reached">
+                            <div class="motiv-title">🎓 <b>${np.label}</b> 도달! · ${np.mastered}/${np.total} 마스터</div>
+                            <div class="motiv-sub">계속 풀어 더 위 학년에 도전해보세요</div>
+                        </div>`;
+                    }
+                    const pct = np.targetMastered > 0 ? Math.min(100, Math.round(np.mastered / np.targetMastered * 100)) : 0;
+                    return `<div class="motivation-card next-grade">
+                        <div class="motiv-title">🎯 다음 학년 <b>${np.label}</b> 까지 <b>${np.remaining}개</b> 더 마스터하면 도달!</div>
+                        <div class="motiv-bar"><div class="motiv-fill" style="width:${pct}%"></div></div>
+                        <div class="motiv-sub">${np.mastered}/${np.targetMastered} 마스터 (${np.label} 전체 ${np.total}개)</div>
+                    </div>`;
+                })()}
                 ${(() => {
                     const suspected = computeSuspectedConcepts(state.sessions, mastery);
                     if (suspected.length === 0) return '';

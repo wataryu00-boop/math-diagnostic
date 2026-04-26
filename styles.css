@@ -458,6 +458,80 @@ button.link-btn {
     border-color: #6b8aff;
 }
 
+/* 동기 부여 카드 — 마스터 임박 / 다음 학년까지 */
+.motivation-card {
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 0 0 10px;
+    font-size: 14px;
+}
+.motivation-card .motiv-title {
+    font-weight: 600;
+    line-height: 1.5;
+}
+.motivation-card .motiv-sub {
+    font-size: 12px;
+    color: #666;
+    margin-top: 4px;
+}
+.motivation-card.almost-mastered {
+    background: #fffaf0;
+    border: 1px solid #f5d99a;
+    border-left: 3px solid #e89a14;
+    color: #6a4a0a;
+}
+.motivation-card.almost-mastered .motiv-title { color: #6a4a0a; }
+.motiv-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+.motiv-chip {
+    background: #fff;
+    border: 1px solid #e89a14;
+    color: #8a5a0a;
+    padding: 5px 10px;
+    border-radius: 14px;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.motiv-chip:hover { background: #fff5e0; }
+.motiv-chip:active { transform: scale(0.96); }
+.motiv-more {
+    font-size: 12px;
+    color: #8a5a0a;
+    align-self: center;
+    margin-left: 4px;
+}
+.motivation-card.next-grade {
+    background: #f0f4ff;
+    border: 1px solid #c5d2f0;
+    border-left: 3px solid #4a6dd0;
+    color: #1a2a5a;
+}
+.motivation-card.next-grade .motiv-title { color: #1a2a5a; }
+.motivation-card.next-grade.reached {
+    background: #f0f7f0;
+    border-color: #cfe5cf;
+    border-left-color: #1a7f3c;
+    color: #1a4d1a;
+}
+.motivation-card.next-grade.reached .motiv-title { color: #1a4d1a; }
+.motiv-bar {
+    background: #d8e0f4;
+    border-radius: 4px;
+    height: 6px;
+    margin: 8px 0 4px;
+    overflow: hidden;
+}
+.motiv-fill {
+    background: #4a6dd0;
+    height: 100%;
+    transition: width 0.3s;
+}
+
 /* 카테고리별 개념 목록 */
 .mastery-list-detail {
     background: #f8f9fb;
