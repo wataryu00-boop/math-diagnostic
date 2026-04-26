@@ -478,17 +478,32 @@ function getMasteryLevel(m) {
 }
 
 // 매력 오답으로 추정된 (직접 풀어 보지 않은) 개념을 sessions 기록에서 집계.
-// 직접 풀어 mastery 데이터(total_seen >= 1)가 있는 개념은 이미 확정됐으므로 제외.
+// "직접 풀이"로 판정 — 두 신호 중 하나라도 있으면 추정에서 제외:
+//   (a) mastery 데이터가 있고 total_seen >= 1
+//   (b) 세션 history 안에 그 개념을 conceptId 로 가진 항목이 1개라도 있음
+// → 어느 한쪽이 동기화 늦어도 다른 쪽으로 잡혀서 약점 추정 누락 없음
 function computeSuspectedConcepts(sessions, mastery) {
     const cById = state.conceptsById;
+
+    // (b): 직접 풀어본 적 있는 개념 — sessions 의 conceptId 모두 수집
+    const directlyTested = new Set();
+    for (const sess of (sessions || [])) {
+        for (const h of (sess.history || [])) {
+            if (h.conceptId) directlyTested.add(h.conceptId);
+        }
+    }
+
     const counts = new Map();
     for (const sess of (sessions || [])) {
         for (const h of (sess.history || [])) {
             if (h.correct) continue;
             const cid = h.inferred;
             if (!cid || !cById[cid]) continue;
+            // (a) mastery 로 확인된 직접 풀이
             const m = mastery?.[cid];
-            if (m && (m.total_seen || 0) > 0) continue; // 직접 풀이로 데이터 있음 — 추정 불필요
+            if (m && (m.total_seen || 0) > 0) continue;
+            // (b) 세션 history 로 확인된 직접 풀이
+            if (directlyTested.has(cid)) continue;
             counts.set(cid, (counts.get(cid) || 0) + 1);
         }
     }
