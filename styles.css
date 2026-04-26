@@ -480,6 +480,40 @@ button.link-btn {
 details summary { cursor: pointer; padding: 8px 0; }
 details summary:hover { color: #4a7eff; }
 
+/* 대시보드 접기/펼치기 섹션 */
+details.dash-section {
+    border: 1px solid #e0e3ea;
+    border-radius: 10px;
+    padding: 0 14px;
+    margin: 12px 0;
+    background: #fafbfc;
+}
+details.dash-section > summary {
+    padding: 14px 4px;
+    font-size: 16px;
+    font-weight: 600;
+    color: #1a1a1a;
+    list-style: none;
+    position: relative;
+    user-select: none;
+}
+details.dash-section > summary::-webkit-details-marker { display: none; }
+details.dash-section > summary::after {
+    content: "▾";
+    float: right;
+    color: #888;
+    transition: transform 0.15s;
+}
+details.dash-section[open] > summary::after { transform: rotate(180deg); }
+details.dash-section > summary .hint {
+    font-size: 12px;
+    font-weight: 400;
+    color: #888;
+}
+details.dash-section[open] > summary .hint { display: none; }
+details.dash-section > .weakness-list,
+details.dash-section > p { margin-top: 0; }
+
 .inferred {
     background: #eef2ff;
     padding: 12px 16px;

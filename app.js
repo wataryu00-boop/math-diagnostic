@@ -1940,37 +1940,43 @@ function renderTeacherDashboard() {
 
             <button class="block" onclick="viewProblemBank()" style="margin-top:8px">📚 문제 은행 둘러보기</button>
 
-            <h3>🔥 현재 우리반이 어려워하는 개념 (학생 수 기준)</h3>
-            ${top.length === 0
-                ? '<p class="meta">아직 진단 데이터가 없어요.</p>'
-                : `<ul class="weakness-list">
-                    ${top.map((w, i) => {
-                        const c = state.conceptsById[w.cid];
-                        const name = c ? c['개념명'] : w.cid;
-                        const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
-                        return `<li>
-                            <b>${i+1}. ${escapeHTML(name)}</b>
-                            <span class="meta">— ${w.count}명 (${pct}%)</span>
-                            <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
-                        </li>`;
-                    }).join('')}
-                </ul>`}
+            ${top.length === 0 ? `
+                <p class="meta">아직 진단 데이터가 없어요.</p>
+            ` : `
+                <details class="dash-section">
+                    <summary>🔥 현재 우리반이 어려워하는 개념 (${top.length}개) <span class="hint">— 클릭하여 펼치기</span></summary>
+                    <ul class="weakness-list">
+                        ${top.map((w, i) => {
+                            const c = state.conceptsById[w.cid];
+                            const name = c ? c['개념명'] : w.cid;
+                            const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
+                            return `<li>
+                                <b>${i+1}. ${escapeHTML(name)}</b>
+                                <span class="meta">— ${w.count}명 (${pct}%)</span>
+                                <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+                            </li>`;
+                        }).join('')}
+                    </ul>
+                </details>
+            `}
 
             ${classSuspected.length > 0 ? `
-                <h3>🔍 매력 오답으로 추정된 개념 (직접 풀이 미실시)</h3>
-                <p class="meta">학생들이 매력 오답을 골라 시사된 개념. 미시도 상태라 다음 진단에서 직접 풀어봐야 확정.</p>
-                <ul class="weakness-list">
-                    ${classSuspected.map((w, i) => {
-                        const c = state.conceptsById[w.cid];
-                        const name = c ? c['개념명'] : w.cid;
-                        const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
-                        return `<li>
-                            <b>${i+1}. ${escapeHTML(name)}</b>
-                            <span class="meta">— ${w.count}명 (${pct}%)</span>
-                            <div class="bar"><div class="bar-fill" style="width:${pct}%; background:#a8a8a8"></div></div>
-                        </li>`;
-                    }).join('')}
-                </ul>
+                <details class="dash-section">
+                    <summary>🔍 매력 오답으로 추정된 개념 (${classSuspected.length}개) <span class="hint">— 미시도 · 클릭하여 펼치기</span></summary>
+                    <p class="meta">학생들이 매력 오답을 골라 시사된 개념. 다음 진단에서 직접 풀어봐야 확정.</p>
+                    <ul class="weakness-list">
+                        ${classSuspected.map((w, i) => {
+                            const c = state.conceptsById[w.cid];
+                            const name = c ? c['개념명'] : w.cid;
+                            const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
+                            return `<li>
+                                <b>${i+1}. ${escapeHTML(name)}</b>
+                                <span class="meta">— ${w.count}명 (${pct}%)</span>
+                                <div class="bar"><div class="bar-fill" style="width:${pct}%; background:#a8a8a8"></div></div>
+                            </li>`;
+                        }).join('')}
+                    </ul>
+                </details>
             ` : ''}
 
             <h3>👥 학생 목록 (${studentCount}명)</h3>
