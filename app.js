@@ -482,6 +482,79 @@ function getMasteryLevel(m) {
     return 2; // unknown / developing
 }
 
+// ─────────────────────────────────────────────────────────
+// 학년 도달도 추정
+// ─────────────────────────────────────────────────────────
+function _gradeNum(label) {
+    if (!label) return null;
+    const m = label.match(/(초|중|고)(\d+)/);
+    if (!m) return null;
+    const base = m[1] === '초' ? 0 : m[1] === '중' ? 6 : 9;
+    return base + parseInt(m[2]);
+}
+
+function _gradeLabel(num) {
+    if (num <= 6) return `초${num}`;
+    if (num <= 9) return `중${num - 6}`;
+    return `고${num - 9}`;
+}
+
+function estimateGradeLevel(mastery) {
+    const byGrade = new Map();
+    for (const c of (state.concepts || [])) {
+        const g = _gradeNum(c['학년단계']);
+        if (g === null) continue;
+        if (!byGrade.has(g)) byGrade.set(g, { total: 0, mastered: 0, developing: 0, weak: 0 });
+        const stats = byGrade.get(g);
+        stats.total++;
+        const m = mastery?.[c['개념ID']];
+        const status = getMasteryStatus(m);
+        if (status === 'mastered') stats.mastered++;
+        else if (status === 'developing') stats.developing++;
+        else if (status === 'weak') stats.weak++;
+    }
+    const grades = [...byGrade.entries()]
+        .sort((a, b) => a[0] - b[0])
+        .map(([g, stats]) => ({
+            grade: g,
+            label: _gradeLabel(g),
+            ...stats,
+            ratio: stats.total > 0 ? stats.mastered / stats.total : 0,
+        }));
+    // 추정 도달: mastery 비율 ≥ 70% 이고 그 학년 개념 수 ≥ 2 인 가장 높은 학년
+    let estimate = null;
+    for (const g of grades) {
+        if (g.ratio >= 0.7 && g.total >= 2) estimate = g;
+    }
+    return { grades, estimate };
+}
+
+function renderGradeProgress(mastery) {
+    const { grades, estimate } = estimateGradeLevel(mastery);
+    if (grades.length === 0) return '';
+    return `
+        <div class="grade-progress-wrap">
+            <div class="grade-estimate">
+                🎓 ${estimate
+                    ? `현재 추정 도달 학년: <b>${estimate.label} 수준</b> (그 학년 개념 ${Math.round(estimate.ratio * 100)}% 마스터)`
+                    : `학년 도달 추정 — <span class="meta">아직 70% 마스터한 학년이 없어요</span>`}
+            </div>
+            <details class="grade-detail">
+                <summary class="meta">학년별 진척도 보기</summary>
+                <div class="area-progress">
+                    ${grades.map(g => `
+                        <div class="area-row">
+                            <span class="area-name">${g.label}</span>
+                            <div class="area-bar"><div class="area-fill" style="width:${Math.round(g.ratio * 100)}%"></div></div>
+                            <span class="area-frac">${g.mastered}/${g.total}</span>
+                        </div>
+                    `).join('')}
+                </div>
+            </details>
+        </div>
+    `;
+}
+
 // 매력 오답으로 추정된 (직접 풀어 보지 않은) 개념을 sessions 기록에서 집계.
 // "직접 풀이"로 판정 — 두 신호 중 하나라도 있으면 추정에서 제외:
 //   (a) mastery 데이터가 있고 total_seen >= 1
@@ -1487,6 +1560,7 @@ function renderWelcome() {
                     <div class="m-stat m-weak ${state.masteryListFilter === 'weak' ? 'active' : ''}" onclick="toggleMasteryList('weak')"><b>${weak}</b><span>⚠️ 약점</span></div>
                     <div class="m-stat m-untouched ${state.masteryListFilter === 'untouched' ? 'active' : ''}" onclick="toggleMasteryList('untouched')"><b>${untouched}</b><span>📋 미시도</span></div>
                 </div>
+                ${renderGradeProgress(mastery)}
                 ${(() => {
                     const suspected = computeSuspectedConcepts(state.sessions, mastery);
                     if (suspected.length === 0) return '';
@@ -2137,6 +2211,7 @@ function renderTeacherStudent() {
                     <div class="m-stat m-developing"><b>${masteryByStatus.developing.length}</b><span>📈 학습 중</span></div>
                     <div class="m-stat m-weak"><b>${masteryByStatus.weak.length}</b><span>⚠️ 약점</span></div>
                 </div>
+                ${renderGradeProgress(sm)}
                 <h3>개념별 숙련도</h3>
                 ${['mastered','developing','weak'].map(status => {
                     const list = masteryByStatus[status];

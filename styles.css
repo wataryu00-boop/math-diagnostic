@@ -401,6 +401,37 @@ button.link-btn {
     font-size: 10px;
 }
 
+/* 학년 도달도 */
+.grade-progress-wrap {
+    background: #f0f7f0;
+    border: 1px solid #cfe5cf;
+    border-left: 3px solid #1a7f3c;
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin: 0 0 14px;
+}
+.grade-estimate {
+    font-size: 14px;
+    color: #1a4d1a;
+    line-height: 1.5;
+}
+.grade-detail {
+    margin-top: 8px;
+}
+.grade-detail summary {
+    font-size: 13px;
+    color: #4a7a4a;
+    padding: 4px 0;
+    list-style: none;
+    cursor: pointer;
+}
+.grade-detail summary::-webkit-details-marker { display: none; }
+.grade-detail summary::after {
+    content: " ▾";
+    color: #6a9a6a;
+}
+.grade-detail[open] summary::after { content: " ▴"; }
+
 /* 추정 약점 배너 (클릭 가능) */
 .suspected-banner {
     background: #f0f4ff;
