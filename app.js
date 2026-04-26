@@ -567,19 +567,21 @@ function estimateGradeLevel(mastery) {
     return { grades, estimate };
 }
 
-// 과거 세션 history 에서 학생이 정답한 anchor 중 가장 높은 학년 도출
-// (이분 탐색 phase 1 결과 + phase 2 에서 정답한 anchor 모두 반영)
+// 과거 세션 history + 현재 진행 중인 학습/진단 history 에서
+// 학생이 정답한 anchor 중 가장 높은 학년 도출
+// (이분 탐색 phase 1 결과 + phase 2 + 학습 모드 anchor 정답 모두 반영)
 function computeBracketEstimateFromSessions(sessions) {
     let highestIdx = -1;
-    for (const s of (sessions || [])) {
-        const hist = Array.isArray(s.history) ? s.history : [];
-        for (const h of hist) {
+    const consider = (hist) => {
+        for (const h of (hist || [])) {
             const aIdx = GRADE_ANCHORS.findIndex(a => a.conceptId === h.conceptId);
-            if (aIdx >= 0 && h.correct) {
-                if (aIdx > highestIdx) highestIdx = aIdx;
-            }
+            if (aIdx >= 0 && h.correct && aIdx > highestIdx) highestIdx = aIdx;
         }
-    }
+    };
+    for (const s of (sessions || [])) consider(s.history);
+    // 진행 중(미저장) 데이터도 반영 — "수시로" 학년 추정 갱신
+    if (state.practice?.history) consider(state.practice.history);
+    if (state.dx?.history) consider(state.dx.history);
     return highestIdx >= 0 ? GRADE_ANCHORS[highestIdx].grade : null;
 }
 
