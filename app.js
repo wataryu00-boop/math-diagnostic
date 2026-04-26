@@ -1871,17 +1871,26 @@ function renderPastResult() {
 // 선생님 대시보드
 // ─────────────────────────────────────────────────────────
 
-function viewStudent(userId) {
+async function viewStudent(userId) {
     state.viewStudentId = userId;
     state.mode = 'teacherStudent';
     render();
+    // 학생 상세 진입 시 항상 최신 데이터 가져오기 (학생이 그동안 푼 결과 반영)
+    try {
+        await loadTeacherData();
+        render();
+    } catch (e) { console.warn('teacher refresh failed', e); }
 }
 
-function backToTeacherDashboard() {
+async function backToTeacherDashboard() {
     state.mode = 'welcome';
     state.viewStudentId = null;
     state.viewSession = null;
     render();
+    try {
+        await loadTeacherData();
+        render();
+    } catch (e) { console.warn('teacher refresh failed', e); }
 }
 
 function viewStudentSession(sessionId) {
