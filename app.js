@@ -1307,11 +1307,22 @@ function _isKoreanChar(ch) {
 
 function _convertMathChunk(s) {
     let t = s;
-    // Unicode 위첨자 (² ³ 등) → ^{n}
+    // 다중 문자 위첨자 (역함수 등) — 단일 위첨자 처리 전 먼저
+    t = t.replace(/⁻¹/g, '^{-1}');
+    t = t.replace(/⁻²/g, '^{-2}');
+    t = t.replace(/⁻³/g, '^{-3}');
+    t = t.replace(/⁻⁴/g, '^{-4}');
+    t = t.replace(/⁻⁰/g, '^{-0}');
+    // 단일 Unicode 위첨자 (² ³ 등) → ^{n}
     const supers = '⁰¹²³⁴⁵⁶⁷⁸⁹';
     for (let i = 0; i < 10; i++) {
         t = t.split(supers[i]).join(`^{${i}}`);
     }
+    // 남은 위첨자 마이너스 (`⁻` 단독) → 일반 마이너스로
+    t = t.replace(/⁻/g, '-');
+    // 합성 기호
+    t = t.replace(/∘/g, '\\circ ');
+    t = t.replace(/∞/g, '\\infty ');
     // 좌표·순서쌍: (a b) → (a, b)   — 콤마 없이 공백으로 구분된 두 항목 처리
     // 3-tuple: (a b c) → (a, b, c) 도 처리
     t = t.replace(/\(([+-]?\d+(?:\.\d+)?|[a-zA-Z])\s+([+-]?\d+(?:\.\d+)?|[a-zA-Z])\s+([+-]?\d+(?:\.\d+)?|[a-zA-Z])\)/g, '($1,\\ $2,\\ $3)');
