@@ -598,7 +598,24 @@ details summary:hover { color: #4a7eff; }
 .admin-link:hover { color: #4a7eff; text-decoration: underline; }
 
 /* ─────────────────────────────────────────────
- * 수식 — 분수 / 루트
+ * KaTeX 수식
+ * ───────────────────────────────────────────── */
+.katex { font-size: 1.05em; }
+.problem .katex { font-size: 1.15em; }
+.choice .katex, .history-item .katex, .solution .katex,
+.why-wrong .katex, .why-wrong-mini .katex, .inferred .katex {
+    font-size: 0.95em;
+}
+/* 긴 수식 줄바꿈 허용 */
+.problem, .choice-text, .history-item, .solution,
+.why-wrong, .why-wrong-mini, .inferred {
+    overflow-wrap: break-word;
+    word-break: break-word;
+}
+.katex-html { white-space: normal; }
+
+/* ─────────────────────────────────────────────
+ * 수식 — 분수 / 루트 (KaTeX 미로드 시 폴백)
  * ───────────────────────────────────────────── */
 
 .frac {

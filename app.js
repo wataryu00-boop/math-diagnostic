@@ -1162,8 +1162,74 @@ function escapeHTML(s) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-function formatMath(s) {
-    if (!s) return '';
+// 한글 vs 비한글로 토큰화하고 한글은 \text{}, 나머지는 수학식으로 변환
+function _isKoreanChar(ch) {
+    return /[ㄱ-힝一-鿿]/.test(ch);
+}
+
+function _escapeLatexText(s) {
+    return s
+        .replace(/\\/g, '\\textbackslash ')
+        .replace(/[%&#_{}$]/g, c => '\\' + c)
+        .replace(/\^/g, '\\textasciicircum ')
+        .replace(/~/g, '\\textasciitilde ');
+}
+
+function _convertMathChunk(s) {
+    let t = s;
+    // Unicode 위첨자 (² ³ 등) → ^{n}
+    const supers = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+    for (let i = 0; i < 10; i++) {
+        t = t.split(supers[i]).join(`^{${i}}`);
+    }
+    // 루트
+    t = t.replace(/√\(([^()]+)\)/g, '\\sqrt{$1}');
+    t = t.replace(/√(\d+)/g, '\\sqrt{$1}');
+    t = t.replace(/√([a-zA-Z])/g, '\\sqrt{$1}');
+    // 분수 — 괄호 형태 우선
+    t = t.replace(/\(([^()]+)\)\/\(([^()]+)\)/g, '\\frac{$1}{$2}');
+    t = t.replace(/\(([^()]+)\)\/(\d+|[a-zA-Z]+)/g, '\\frac{$1}{$2}');
+    t = t.replace(/(\d+|[a-zA-Z]+)\/\(([^()]+)\)/g, '\\frac{$1}{$2}');
+    // 단순 분수
+    t = t.replace(/(\d+|[a-zA-Z]+)\/(\d+|[a-zA-Z]+)(?![\/\^])/g, '\\frac{$1}{$2}');
+    // 연산자
+    t = t.replace(/×/g, '\\times ');
+    t = t.replace(/÷/g, '\\div ');
+    t = t.replace(/±/g, '\\pm ');
+    t = t.replace(/∓/g, '\\mp ');
+    t = t.replace(/≤/g, '\\leq ');
+    t = t.replace(/≥/g, '\\geq ');
+    t = t.replace(/≠/g, '\\neq ');
+    t = t.replace(/⋅/g, '\\cdot ');
+    t = t.replace(/·/g, '\\cdot ');
+    return t;
+}
+
+function _toLatex(s) {
+    const tokens = [];
+    let buf = '';
+    let inKorean = false;
+    for (const ch of s) {
+        const isK = _isKoreanChar(ch);
+        if (buf === '') {
+            inKorean = isK;
+            buf = ch;
+        } else if (isK === inKorean) {
+            buf += ch;
+        } else {
+            tokens.push({ korean: inKorean, text: buf });
+            buf = ch;
+            inKorean = isK;
+        }
+    }
+    if (buf) tokens.push({ korean: inKorean, text: buf });
+    return tokens.map(tok => {
+        if (tok.korean) return `\\text{${_escapeLatexText(tok.text)}}`;
+        return _convertMathChunk(tok.text);
+    }).join('');
+}
+
+function _fallbackFormatMath(s) {
     let t = escapeHTML(s);
     t = t.replace(/√\(([^()]+)\)/g, '√<span class="sqrt-arg">$1</span>');
     t = t.replace(/√(\d+)/g, '√<span class="sqrt-arg">$1</span>');
@@ -1177,6 +1243,24 @@ function formatMath(s) {
     t = t.replace(/(\d+|[a-zA-Z]+)\/(\d+|[a-zA-Z]+)(?![\/\^])/g,
         '<span class="frac"><span class="num">$1</span><span class="den">$2</span></span>');
     return t;
+}
+
+function formatMath(s) {
+    if (!s) return '';
+    if (typeof katex !== 'undefined') {
+        try {
+            const latex = _toLatex(s);
+            return katex.renderToString(latex, {
+                throwOnError: false,
+                displayMode: false,
+                output: 'html',
+                strict: false,
+            });
+        } catch (e) {
+            console.warn('KaTeX render fail:', e.message);
+        }
+    }
+    return _fallbackFormatMath(s);
 }
 
 function formatDate(iso) {
