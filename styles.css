@@ -332,8 +332,15 @@ button.link-btn {
     padding: 14px 16px;
     border-radius: 8px;
     margin: 10px 0;
-    line-height: 1.7;
     font-size: 16px;
+}
+.example-item {
+    line-height: 1.7;
+    padding: 4px 0;
+}
+.example-item + .example-item {
+    border-top: 1px dashed #d8dde6;
+    margin-top: 4px;
 }
 
 /* 선생님 - 문제 은행 카드 */

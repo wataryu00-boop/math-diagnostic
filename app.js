@@ -2367,7 +2367,11 @@ function renderConceptStudy() {
 
             ${example ? `
                 <h3>예시</h3>
-                <div class="example-box">${formatMath(example)}</div>
+                <div class="example-box">
+                    ${example.split(/\s+\/\s+/).map(ex => ex.trim()).filter(Boolean).map(ex =>
+                        `<div class="example-item">${formatMath(ex)}</div>`
+                    ).join('')}
+                </div>
             ` : ''}
 
             <button class="primary block" style="margin-top:24px" onclick="startPracticeFromStudy()">▶ 개념 확인 문제 풀기</button>
@@ -2441,7 +2445,11 @@ function renderTeacherConceptProblems() {
             <p class="meta">${cid} · ${escapeHTML(c['영역'])} · ${escapeHTML(c['학년단계'])} · 문제 ${problems.length}개</p>
             <div class="solution" style="margin-bottom:20px">
                 <b>개념 설명:</b> ${formatMath(c['개념설명'] || c['한줄설명'] || '')}
-                ${c['예시'] ? `<br><br><b>예시:</b> ${formatMath(c['예시'])}` : ''}
+                ${c['예시'] ? `<br><br><b>예시:</b><div style="margin-top:6px">
+                    ${c['예시'].split(/\s+\/\s+/).map(ex => ex.trim()).filter(Boolean).map(ex =>
+                        `<div class="example-item">${formatMath(ex)}</div>`
+                    ).join('')}
+                </div>` : ''}
             </div>
 
             ${problems.map((p, idx) => `
