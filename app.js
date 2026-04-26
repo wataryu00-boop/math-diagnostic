@@ -1307,22 +1307,26 @@ function _isKoreanChar(ch) {
 
 function _convertMathChunk(s) {
     let t = s;
-    // 다중 문자 위첨자 (역함수 등) — 단일 위첨자 처리 전 먼저
-    t = t.replace(/⁻¹/g, '^{-1}');
-    t = t.replace(/⁻²/g, '^{-2}');
-    t = t.replace(/⁻³/g, '^{-3}');
-    t = t.replace(/⁻⁴/g, '^{-4}');
-    t = t.replace(/⁻⁰/g, '^{-0}');
-    // 단일 Unicode 위첨자 (² ³ 등) → ^{n}
-    const supers = '⁰¹²³⁴⁵⁶⁷⁸⁹';
-    for (let i = 0; i < 10; i++) {
-        t = t.split(supers[i]).join(`^{${i}}`);
-    }
-    // 남은 위첨자 마이너스 (`⁻` 단독) → 일반 마이너스로
+    // Unicode 위첨자 codepoint 매핑 (명시적 escape — 어떤 입력 인코딩이든 동일하게 매칭)
+    // ⁰=2070 ¹=00B9 ²=00B2 ³=00B3 ⁴=2074 ⁵=2075 ⁶=2076 ⁷=2077 ⁸=2078 ⁹=2079 ⁻=207B
+    const SUP_DIGIT_CLASS = '[⁰¹²³⁴⁵⁶⁷⁸⁹]';
+    const SUP_DIGIT_MAP = {
+        '⁰':'0','¹':'1','²':'2','³':'3','⁴':'4',
+        '⁵':'5','⁶':'6','⁷':'7','⁸':'8','⁹':'9',
+    };
+    // 위첨자 마이너스 + 위첨자 숫자(여러 자리) → ^{-N}  (예: f⁻¹ → f^{-1})
+    t = t.replace(new RegExp('⁻(' + SUP_DIGIT_CLASS + '+)', 'g'), (_, run) => {
+        return '^{-' + [...run].map(c => SUP_DIGIT_MAP[c]).join('') + '}';
+    });
+    // 단독 위첨자 숫자 (연속) → ^{N} (예: x²³ → x^{23})
+    t = t.replace(new RegExp(SUP_DIGIT_CLASS + '+', 'g'), run => {
+        return '^{' + [...run].map(c => SUP_DIGIT_MAP[c]).join('') + '}';
+    });
+    // 남은 단독 위첨자 마이너스
     t = t.replace(/⁻/g, '-');
-    // 합성 기호
-    t = t.replace(/∘/g, '\\circ ');
-    t = t.replace(/∞/g, '\\infty ');
+    // 합성·무한 기호
+    t = t.replace(/∘/g, '\\circ ');     // ∘
+    t = t.replace(/∞/g, '\\infty ');    // ∞
     // 좌표·순서쌍: (a b) → (a, b)   — 콤마 없이 공백으로 구분된 두 항목 처리
     // 3-tuple: (a b c) → (a, b, c) 도 처리
     t = t.replace(/\(([+-]?\d+(?:\.\d+)?|[a-zA-Z])\s+([+-]?\d+(?:\.\d+)?|[a-zA-Z])\s+([+-]?\d+(?:\.\d+)?|[a-zA-Z])\)/g, '($1,\\ $2,\\ $3)');
