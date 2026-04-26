@@ -27,6 +27,7 @@ const state = {
     viewSession: null,
     teacherData: null,       // { students, sessions, classWeak } for teacher dashboard
     viewStudentId: null,     // when teacher drills into one student
+    expandedClassConcept: null, // { kind: 'weak'|'suspected', cid } — 대시보드에서 펼쳐진 개념
     studyConceptId: null,    // 학생 - 개념 설명 페이지에서 보고 있는 개념
     viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
     mastery: null,           // { [conceptId]: { correct_streak, total_seen, total_correct, ... } }
@@ -380,6 +381,15 @@ async function loadTeacherData() {
         .map(([cid, count]) => ({ cid, count }))
         .sort((a, b) => b.count - a.count);
 
+    // 학생별 추정 약점 미리 계산 (개념 클릭 시 학생 목록 보여주기 위해)
+    const suspectedByUser = {};
+    for (const p of allProfiles) {
+        if (p.role !== 'student') continue;
+        const sList = sessionsByUser.get(p.id) || [];
+        const sm = masteryByUser[p.id] || {};
+        suspectedByUser[p.id] = computeSuspectedConcepts(sList, sm);
+    }
+
     state.teacherData = {
         students: studentList,
         sessions,
@@ -387,6 +397,7 @@ async function loadTeacherData() {
         classWeak,
         totalSessions: sessions.length,
         masteryByUser,
+        suspectedByUser,
     };
 }
 
@@ -1871,6 +1882,45 @@ function renderPastResult() {
 // 선생님 대시보드
 // ─────────────────────────────────────────────────────────
 
+function toggleClassConcept(kind, cid) {
+    const cur = state.expandedClassConcept;
+    if (cur && cur.kind === kind && cur.cid === cid) {
+        state.expandedClassConcept = null;
+    } else {
+        state.expandedClassConcept = { kind, cid };
+    }
+    render();
+}
+
+function findStudentsForClassConcept(kind, cid) {
+    const td = state.teacherData;
+    if (!td) return [];
+    return td.students.filter(stu => {
+        if (kind === 'weak') {
+            const m = td.masteryByUser?.[stu.id]?.[cid];
+            return m && getMasteryStatus(m) === 'weak';
+        } else if (kind === 'suspected') {
+            const susp = td.suspectedByUser?.[stu.id] || [];
+            return susp.some(s => s.cid === cid);
+        }
+        return false;
+    });
+}
+
+function _renderStudentSublist(students) {
+    if (!students || students.length === 0) {
+        return '<div class="student-sublist-empty">해당 학생 없음</div>';
+    }
+    return `<ul class="student-sublist" onclick="event.stopPropagation()">
+        ${students.map(stu => `
+            <li onclick="viewStudent('${stu.id}')">
+                <b>${escapeHTML(stu.username)}</b>
+                <span class="meta">진단 ${stu.sessionCount}회 · 약점 ${stu.uniqueWeakCount}개</span>
+            </li>
+        `).join('')}
+    </ul>`;
+}
+
 async function viewStudent(userId) {
     state.viewStudentId = userId;
     state.mode = 'teacherStudent';
@@ -1954,15 +2004,22 @@ function renderTeacherDashboard() {
             ` : `
                 <details class="dash-section">
                     <summary>🔥 현재 우리반이 어려워하는 개념 (${top.length}개) <span class="hint">— 클릭하여 펼치기</span></summary>
+                    <p class="meta">개념을 클릭하면 그 개념을 약점으로 가진 학생 목록이 펼쳐져요</p>
                     <ul class="weakness-list">
                         ${top.map((w, i) => {
                             const c = state.conceptsById[w.cid];
                             const name = c ? c['개념명'] : w.cid;
                             const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
-                            return `<li>
+                            const exp = state.expandedClassConcept;
+                            const isOpen = exp && exp.kind === 'weak' && exp.cid === w.cid;
+                            const sublist = isOpen
+                                ? _renderStudentSublist(findStudentsForClassConcept('weak', w.cid))
+                                : '';
+                            return `<li class="clickable-concept ${isOpen ? 'open' : ''}" onclick="toggleClassConcept('weak', '${w.cid}')">
                                 <b>${i+1}. ${escapeHTML(name)}</b>
-                                <span class="meta">— ${w.count}명 (${pct}%)</span>
+                                <span class="meta">— ${w.count}명 (${pct}%) ${isOpen ? '▴' : '▾'}</span>
                                 <div class="bar"><div class="bar-fill" style="width:${pct}%"></div></div>
+                                ${sublist}
                             </li>`;
                         }).join('')}
                     </ul>
@@ -1972,16 +2029,22 @@ function renderTeacherDashboard() {
             ${classSuspected.length > 0 ? `
                 <details class="dash-section">
                     <summary>🔍 매력 오답으로 추정된 개념 (${classSuspected.length}개) <span class="hint">— 미시도 · 클릭하여 펼치기</span></summary>
-                    <p class="meta">학생들이 매력 오답을 골라 시사된 개념. 다음 진단에서 직접 풀어봐야 확정.</p>
+                    <p class="meta">학생들이 매력 오답을 골라 시사된 개념. 개념 클릭하면 학생 목록 표시.</p>
                     <ul class="weakness-list">
                         ${classSuspected.map((w, i) => {
                             const c = state.conceptsById[w.cid];
                             const name = c ? c['개념명'] : w.cid;
                             const pct = studentCount > 0 ? Math.round((w.count / studentCount) * 100) : 0;
-                            return `<li>
+                            const exp = state.expandedClassConcept;
+                            const isOpen = exp && exp.kind === 'suspected' && exp.cid === w.cid;
+                            const sublist = isOpen
+                                ? _renderStudentSublist(findStudentsForClassConcept('suspected', w.cid))
+                                : '';
+                            return `<li class="clickable-concept ${isOpen ? 'open' : ''}" onclick="toggleClassConcept('suspected', '${w.cid}')">
                                 <b>${i+1}. ${escapeHTML(name)}</b>
-                                <span class="meta">— ${w.count}명 (${pct}%)</span>
+                                <span class="meta">— ${w.count}명 (${pct}%) ${isOpen ? '▴' : '▾'}</span>
                                 <div class="bar"><div class="bar-fill" style="width:${pct}%; background:#a8a8a8"></div></div>
+                                ${sublist}
                             </li>`;
                         }).join('')}
                     </ul>
