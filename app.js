@@ -595,10 +595,16 @@ function renderGradeProgress(mastery) {
     } else {
         estimateLine = `학년 도달 추정 — <span class="meta">아직 70% 마스터한 학년이 없어요</span>`;
     }
+    // 학년 다시 추정 링크: 빠른 추정이 있고 학생 화면일 때만
+    const showRegradeLink = bracketGrade !== null && state.profile?.role !== 'teacher';
+    const regradeLink = showRegradeLink
+        ? `<a href="#" class="meta regrade-link" onclick="event.preventDefault(); if (confirm('학년을 처음부터 다시 추정합니다 (이분 탐색 약 3~6 문제). 진행할까요?')) startRegrade();">학년 다시 추정</a>`
+        : '';
     return `
         <div class="grade-progress-wrap">
             <div class="grade-estimate">
                 🎓 ${estimateLine}
+                ${regradeLink ? ` · ${regradeLink}` : ''}
             </div>
             <details class="grade-detail">
                 <summary class="meta">학년별 진척도 보기</summary>
@@ -957,31 +963,58 @@ function getConceptDepth(cid) {
     return _conceptDepthMemo[cid];
 }
 
+function _conceptGradeNum(cid) {
+    const c = state.conceptsById?.[cid];
+    return c ? _gradeNum(c['학년단계']) : null;
+}
+
 function buildDynamicBattery() {
-    // 1단계: 코어 배터리에서 마스터 안 된 개념만
-    let battery = DIAGNOSTIC_BATTERY.filter(shouldTestInBattery);
+    // 빠른 추정 학년 — 있으면 학생 학년 ±1 범위로 개념 필터/정렬
+    const studentGrade = state.dx?.bracketEstimate
+        ?? computeBracketEstimateFromSessions(state.sessions);
+    const inGradeBand = (cid) => {
+        if (studentGrade === null) return true;
+        const g = _conceptGradeNum(cid);
+        if (g === null) return true;
+        // 학생 학년 + 1 까지 (도전 한 단계 위까지). 그 이상은 너무 어려움.
+        return g <= studentGrade + 1;
+    };
+    const gradeDiff = (cid) => {
+        if (studentGrade === null) return 0;
+        const g = _conceptGradeNum(cid);
+        if (g === null) return 99;
+        return Math.abs(g - studentGrade);
+    };
+
+    // 1단계: 코어 배터리에서 마스터 안 됐고 학년 범위 내인 것
+    let battery = DIAGNOSTIC_BATTERY
+        .filter(shouldTestInBattery)
+        .filter(inGradeBand);
 
     // 2단계: 부족하면 보충. 우선순위:
-    //   (1) 선수 개념에 약점이 없어 도전 가능한 것
-    //   (2) 더 상위(깊은) 개념 우선 — 학생을 위로 끌어올리는 방향
-    //   (3) 동률이면 적게 본 순
+    //   (1) 학생 학년에 가까운 개념
+    //   (2) 선수 개념에 약점이 없어 도전 가능한 것
+    //   (3) 깊이(상위) 우선
+    //   (4) 적게 본 순
     if (battery.length < TARGET_BATTERY_SIZE) {
         const allCids = state.concepts.map(c => c['개념ID']);
         const supplements = allCids
             .filter(cid => !battery.includes(cid))
             .filter(cid => shouldTestInBattery(cid))
+            .filter(cid => inGradeBand(cid))
             .filter(cid => {
-                // 선수 개념 중 'weak' 인 게 있으면 아직 도전 어려움
                 const prereqs = getPrereqs(cid);
                 return !prereqs.some(p => getMasteryStatus(state.mastery?.[p]) === 'weak');
             })
             .map(cid => ({
                 cid,
+                gDiff: gradeDiff(cid),
                 depth: getConceptDepth(cid),
                 seen: state.mastery?.[cid]?.total_seen || 0,
             }))
             .sort((a, b) => {
-                if (b.depth !== a.depth) return b.depth - a.depth;  // 깊은(상위) 개념 먼저
+                if (a.gDiff !== b.gDiff) return a.gDiff - b.gDiff;       // 학생 학년에 가까울수록 우선
+                if (b.depth !== a.depth) return b.depth - a.depth;       // 다음으로 깊은(상위) 개념
                 return a.seen - b.seen;
             });
         const needed = TARGET_BATTERY_SIZE - battery.length;
@@ -999,13 +1032,16 @@ function buildDynamicBattery() {
     return shuffle(battery);
 }
 
-function startDiagnosis() {
+function startDiagnosis(opts = {}) {
     state.mode = 'dx';
+    const forceRegrade = opts.forceRegrade === true;
+    const existingGrade = forceRegrade ? null : computeBracketEstimateFromSessions(state.sessions);
+    const skipPhase1 = existingGrade !== null;
     state.dx = {
-        phase: 'gradeSearch',  // 'gradeSearch' → 'concept'
-        bracket: { low: 0, high: GRADE_ANCHORS.length - 1, lastCorrectIdx: -1, currentMid: null, anchorsAsked: 0 },
-        bracketEstimate: null,  // 빠른 학년 추정 (이분 탐색 결과)
-        queue: [],  // phase 2 진입 시 buildDynamicBattery 로 채움
+        phase: skipPhase1 ? 'concept' : 'gradeSearch',
+        bracket: skipPhase1 ? null : { low: 0, high: GRADE_ANCHORS.length - 1, lastCorrectIdx: -1, currentMid: null, anchorsAsked: 0 },
+        bracketEstimate: existingGrade,  // 기존 추정 그대로 가져감
+        queue: skipPhase1 ? buildDynamicBattery() : [],
         asked: new Set(),
         wrongConcepts: new Set(),
         history: [],
@@ -1016,6 +1052,11 @@ function startDiagnosis() {
         lastInferred: null,
     };
     nextDxQuestion();
+}
+
+// 학년 다시 추정 — 사용자가 학년 수준이 의심스러울 때 명시적 트리거
+function startRegrade() {
+    startDiagnosis({ forceRegrade: true });
 }
 
 function _finalizeBracketEstimate() {
