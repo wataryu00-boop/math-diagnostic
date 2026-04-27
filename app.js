@@ -1550,6 +1550,10 @@ function renderShapeSVG(descriptor) {
             case 'fraction-bar': svg = _svgFractionBar(args); break;
             case 'algebra-tile': svg = _svgAlgebraTile(args); break;
             case 'square-root': svg = _svgSquareRoot(args); break;
+            case 'hyperbola': svg = _svgHyperbola(args); break;
+            case 'sqrt-graph': svg = _svgSqrtGraph(args); break;
+            case 'function-box': svg = _svgFunctionBox(args); break;
+            case 'two-lines': svg = _svgTwoLines(args); break;
             default: return '';
         }
     } catch (e) {
@@ -1829,6 +1833,112 @@ function _svgCoordPoints(args) {
         ${c.axes}
         ${lines}
         ${dots}
+    </svg>`;
+}
+
+// 유리함수 y=k/x — args: "k[,xMin,xMax]"
+function _svgHyperbola(args) {
+    const a = args.split(',').map(s => parseFloat(s.trim()));
+    if (!isFinite(a[0]) || a[0] === 0) return '';
+    const k = a[0];
+    const xMin = isFinite(a[1]) ? a[1] : -5, xMax = isFinite(a[2]) ? a[2] : 5;
+    const yLim = Math.max(Math.abs(k)*2, 5);
+    const yMin = -yLim, yMax = yLim;
+    const c = _coordCanvas(xMin, xMax, yMin, yMax);
+    const ptsRight = [], ptsLeft = [];
+    for (let i = 1; i <= 60; i++) {
+        const xR = 0.1 + (xMax - 0.1) * i / 60;
+        const yR = k / xR;
+        if (yR >= yMin && yR <= yMax) ptsRight.push(`${c.xToPx(xR).toFixed(1)},${c.yToPx(yR).toFixed(1)}`);
+        const xL = xMin + (-0.1 - xMin) * i / 60;
+        const yL = k / xL;
+        if (yL >= yMin && yL <= yMax) ptsLeft.push(`${c.xToPx(xL).toFixed(1)},${c.yToPx(yL).toFixed(1)}`);
+    }
+    return `<svg viewBox="0 0 ${c.W} ${c.H}" class="shape-svg">
+        ${c.axes}
+        <polyline points="${ptsRight.join(' ')}" fill="none" stroke="#3a5cb8" stroke-width="2"/>
+        <polyline points="${ptsLeft.join(' ')}" fill="none" stroke="#3a5cb8" stroke-width="2"/>
+    </svg>`;
+}
+
+// 무리함수 y=√x  또는 y=√(x-p)+q — args: "p,q" (기본 0,0)
+function _svgSqrtGraph(args) {
+    const a = args.split(',').map(s => parseFloat(s.trim()));
+    const p = isFinite(a[0]) ? a[0] : 0;
+    const q = isFinite(a[1]) ? a[1] : 0;
+    const xMin = p - 1, xMax = p + 9;
+    const yMin = q - 1, yMax = q + 4;
+    const c = _coordCanvas(xMin, xMax, yMin, yMax);
+    const pts = [];
+    for (let i = 0; i <= 60; i++) {
+        const x = p + (xMax - p) * i / 60;
+        if (x < p) continue;
+        const y = Math.sqrt(x - p) + q;
+        pts.push(`${c.xToPx(x).toFixed(1)},${c.yToPx(y).toFixed(1)}`);
+    }
+    return `<svg viewBox="0 0 ${c.W} ${c.H}" class="shape-svg">
+        ${c.axes}
+        <polyline points="${pts.join(' ')}" fill="none" stroke="#3a5cb8" stroke-width="2"/>
+        <circle cx="${c.xToPx(p)}" cy="${c.yToPx(q)}" r="3" fill="#c4143a"/>
+    </svg>`;
+}
+
+// 합성함수·역함수 박스 — args: "f,g" (예 "f:2x+1,g:x²")
+function _svgFunctionBox(args) {
+    const parts = args.split(',').map(s => s.trim()).filter(Boolean);
+    const W = 320, H = 110;
+    if (parts.length === 2) {
+        const [f, g] = parts;
+        return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+            <text x="20" y="${H/2+5}" font-size="14" fill="#222">x</text>
+            <line x1="35" y1="${H/2}" x2="55" y2="${H/2}" stroke="#444" stroke-width="1.5"/>
+            <polygon points="55,${H/2} 50,${H/2-4} 50,${H/2+4}" fill="#444"/>
+            <rect x="60" y="${H/2-22}" width="80" height="44" fill="#e8f0ff" stroke="#3a5cb8" stroke-width="2" rx="6"/>
+            <text x="100" y="${H/2+5}" text-anchor="middle" font-size="14" font-weight="600" fill="#1a2a5a">${escapeHTML(f)}</text>
+            <line x1="140" y1="${H/2}" x2="180" y2="${H/2}" stroke="#444" stroke-width="1.5"/>
+            <polygon points="180,${H/2} 175,${H/2-4} 175,${H/2+4}" fill="#444"/>
+            <rect x="185" y="${H/2-22}" width="80" height="44" fill="#fff5e0" stroke="#c47914" stroke-width="2" rx="6"/>
+            <text x="225" y="${H/2+5}" text-anchor="middle" font-size="14" font-weight="600" fill="#5a3d00">${escapeHTML(g)}</text>
+            <line x1="265" y1="${H/2}" x2="290" y2="${H/2}" stroke="#444" stroke-width="1.5"/>
+            <polygon points="290,${H/2} 285,${H/2-4} 285,${H/2+4}" fill="#444"/>
+            <text x="300" y="${H/2+5}" font-size="14" fill="#222">y</text>
+        </svg>`;
+    }
+    if (parts.length === 1) {
+        const f = parts[0];
+        return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+            <text x="40" y="${H/2+5}" font-size="14" fill="#222">x</text>
+            <line x1="55" y1="${H/2}" x2="100" y2="${H/2}" stroke="#444" stroke-width="1.5"/>
+            <polygon points="100,${H/2} 95,${H/2-4} 95,${H/2+4}" fill="#444"/>
+            <rect x="110" y="${H/2-22}" width="100" height="44" fill="#e8f0ff" stroke="#3a5cb8" stroke-width="2" rx="6"/>
+            <text x="160" y="${H/2+5}" text-anchor="middle" font-size="15" font-weight="600" fill="#1a2a5a">${escapeHTML(f)}</text>
+            <line x1="210" y1="${H/2}" x2="260" y2="${H/2}" stroke="#444" stroke-width="1.5"/>
+            <polygon points="260,${H/2} 255,${H/2-4} 255,${H/2+4}" fill="#444"/>
+            <text x="270" y="${H/2+5}" font-size="14" fill="#222">y</text>
+        </svg>`;
+    }
+    return '';
+}
+
+// 연립 두 직선 — args: "m1,b1;m2,b2"  교점이 해
+function _svgTwoLines(args) {
+    const lines = args.split(';').map(s => s.split(',').map(t => parseFloat(t.trim())));
+    if (lines.length !== 2 || lines.some(l => l.length < 2 || l.some(n => !isFinite(n)))) return '';
+    const [[m1, b1], [m2, b2]] = lines;
+    if (m1 === m2) return ''; // 평행 — 안 그림
+    const xInt = (b2 - b1) / (m1 - m2);
+    const yInt = m1 * xInt + b1;
+    const xLim = Math.max(8, Math.abs(xInt) + 4);
+    const yLim = Math.max(8, Math.abs(yInt) + 4);
+    const xMin = -xLim, xMax = xLim, yMin = -yLim, yMax = yLim;
+    const c = _coordCanvas(xMin, xMax, yMin, yMax);
+    const y1a = m1 * xMin + b1, y1b = m1 * xMax + b1;
+    const y2a = m2 * xMin + b2, y2b = m2 * xMax + b2;
+    return `<svg viewBox="0 0 ${c.W} ${c.H}" class="shape-svg">
+        ${c.axes}
+        <line x1="${c.xToPx(xMin)}" y1="${c.yToPx(y1a)}" x2="${c.xToPx(xMax)}" y2="${c.yToPx(y1b)}" stroke="#3a5cb8" stroke-width="2"/>
+        <line x1="${c.xToPx(xMin)}" y1="${c.yToPx(y2a)}" x2="${c.xToPx(xMax)}" y2="${c.yToPx(y2b)}" stroke="#c47914" stroke-width="2"/>
+        <circle cx="${c.xToPx(xInt)}" cy="${c.yToPx(yInt)}" r="4" fill="#c4143a"/>
     </svg>`;
 }
 
