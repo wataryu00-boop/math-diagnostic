@@ -1557,40 +1557,45 @@ function renderShapeSVG(descriptor) {
     return svg ? `<div class="shape-wrap">${svg}</div>` : '';
 }
 
-// 직각삼각형 — args: "base,height" (예: "4,3" → 4-3-5)
+// 직각삼각형 — args: "base,height[,labelA,labelB,labelC]"
+//   기본 라벨: A=왼쪽아래(예각), B=오른쪽위(예각), C=오른쪽아래(직각)
+//   sin A = 높이/빗변, cos A = 밑변/빗변, tan A = 높이/밑변
 function _svgRightTriangle(args) {
-    const [bs, hs] = args.split(',').map(s => s.trim());
-    const base = parseFloat(bs), height = parseFloat(hs);
+    const parts = args.split(',').map(s => s.trim());
+    const base = parseFloat(parts[0]), height = parseFloat(parts[1]);
     if (!isFinite(base) || !isFinite(height) || base <= 0 || height <= 0) return '';
+    const lA = parts[2] || 'A';
+    const lB = parts[3] || 'B';
+    const lC = parts[4] || 'C';
     const hyp = Math.sqrt(base*base + height*height);
-    const W = 220, H = 180, pad = 30;
-    // 화면 좌표: 원점 (pad, H-pad), x 오른쪽, y 위
-    const sx = (base > height ? (W - 2*pad) / base : (H - 2*pad) / height) ;
+    const W = 240, H = 200, pad = 36;
     const scale = Math.min((W - 2*pad) / base, (H - 2*pad) / height);
-    const x0 = pad, y0 = H - pad;
-    const x1 = x0 + base * scale, y1 = y0;          // 밑변 끝(직각)
-    const x2 = x0 + base * scale, y2 = y0 - height * scale; // 위 꼭짓점
-    // hyp: (x0,y0) → (x2,y2)
+    const x0 = pad, y0 = H - pad;                          // A — 왼쪽 아래(예각)
+    const x1 = x0 + base * scale, y1 = y0;                 // C — 오른쪽 아래(직각)
+    const x2 = x1, y2 = y0 - height * scale;               // B — 오른쪽 위(예각)
     const fmt = (n) => Number.isInteger(n) ? n : (Math.round(n*100)/100);
     return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
         <polygon points="${x0},${y0} ${x1},${y1} ${x2},${y2}" fill="#e8f0ff" stroke="#3a5cb8" stroke-width="2"/>
-        <rect x="${x1-10}" y="${y1-10}" width="10" height="10" fill="none" stroke="#3a5cb8" stroke-width="1.5"/>
-        <text x="${(x0+x1)/2}" y="${y0+18}" text-anchor="middle" font-size="13" fill="#222">${fmt(base)}</text>
-        <text x="${x1+10}" y="${(y1+y2)/2+4}" font-size="13" fill="#222">${fmt(height)}</text>
-        <text x="${(x0+x2)/2-6}" y="${(y0+y2)/2-4}" text-anchor="end" font-size="13" fill="#222">${fmt(hyp)}</text>
+        <rect x="${x1-12}" y="${y1-12}" width="12" height="12" fill="none" stroke="#3a5cb8" stroke-width="1.5"/>
+        <text x="${(x0+x1)/2}" y="${y0+20}" text-anchor="middle" font-size="13" fill="#222">${fmt(base)}</text>
+        <text x="${x1+8}" y="${(y1+y2)/2+4}" font-size="13" fill="#222">${fmt(height)}</text>
+        <text x="${(x0+x2)/2-8}" y="${(y0+y2)/2-6}" text-anchor="end" font-size="13" fill="#222">${fmt(hyp)}</text>
+        <text x="${x0-6}" y="${y0+6}" text-anchor="end" font-size="15" font-weight="700" fill="#c4143a">${lA}</text>
+        <text x="${x2+6}" y="${y2-2}" font-size="15" font-weight="700" fill="#c4143a">${lB}</text>
+        <text x="${x1+6}" y="${y1+18}" font-size="15" font-weight="700" fill="#c4143a">${lC}</text>
     </svg>`;
 }
 
-// 정삼각형 — args: "side"
+// 정삼각형 — args: "side[,labelA,labelB,labelC]" (A=위, B=왼아래, C=오아래)
 function _svgTriangleEq(args) {
-    const s = parseFloat(args.trim());
+    const parts = args.split(',').map(s => s.trim());
+    const s = parseFloat(parts[0]);
     if (!isFinite(s) || s <= 0) return '';
-    const W = 200, H = 180, pad = 24;
+    const lA = parts[1] || 'A';
+    const lB = parts[2] || 'B';
+    const lC = parts[3] || 'C';
+    const W = 220, H = 200, pad = 30;
     const scale = Math.min((W-2*pad)/s, (H-2*pad)/(s*Math.sqrt(3)/2));
-    const x0 = W/2, y0 = pad + s*Math.sqrt(3)/2*scale;
-    const xL = x0 - s*scale/2, yL = pad;
-    const xR = x0 + s*scale/2, yR = pad;
-    // 잠깐, 위쪽이 꼭짓점이어야. 다시:
     const top = { x: W/2, y: pad };
     const bl = { x: W/2 - s*scale/2, y: pad + s*Math.sqrt(3)/2*scale };
     const br = { x: W/2 + s*scale/2, y: pad + s*Math.sqrt(3)/2*scale };
@@ -1600,6 +1605,9 @@ function _svgTriangleEq(args) {
         <text x="${(top.x+bl.x)/2-10}" y="${(top.y+bl.y)/2}" font-size="13" fill="#222">${fmt(s)}</text>
         <text x="${(top.x+br.x)/2+6}" y="${(top.y+br.y)/2}" font-size="13" fill="#222">${fmt(s)}</text>
         <text x="${(bl.x+br.x)/2}" y="${bl.y+18}" text-anchor="middle" font-size="13" fill="#222">${fmt(s)}</text>
+        <text x="${top.x}" y="${top.y-6}" text-anchor="middle" font-size="15" font-weight="700" fill="#c4143a">${lA}</text>
+        <text x="${bl.x-6}" y="${bl.y+18}" text-anchor="end" font-size="15" font-weight="700" fill="#c4143a">${lB}</text>
+        <text x="${br.x+6}" y="${br.y+18}" font-size="15" font-weight="700" fill="#c4143a">${lC}</text>
     </svg>`;
 }
 
