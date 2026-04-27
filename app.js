@@ -1557,8 +1557,9 @@ function renderShapeSVG(descriptor) {
     return svg ? `<div class="shape-wrap">${svg}</div>` : '';
 }
 
-// 직각삼각형 — args: "base,height[,labelA,labelB,labelC]"
-//   기본 라벨: A=왼쪽아래(예각), B=오른쪽위(예각), C=오른쪽아래(직각)
+// 직각삼각형 — args: "base,height[,A,B,C[,baseLabel,heightLabel,hypLabel]]"
+//   기본 꼭짓점 라벨: A=왼쪽아래(예각), B=오른쪽위(예각), C=오른쪽아래(직각)
+//   변 라벨이 명시되면 자동 수치 대신 그 텍스트 표시 (예: "√3"). 빈 문자열이면 표시 안 함.
 //   sin A = 높이/빗변, cos A = 밑변/빗변, tan A = 높이/밑변
 function _svgRightTriangle(args) {
     const parts = args.split(',').map(s => s.trim());
@@ -1568,21 +1569,25 @@ function _svgRightTriangle(args) {
     const lB = parts[3] || 'B';
     const lC = parts[4] || 'C';
     const hyp = Math.sqrt(base*base + height*height);
+    const fmt = (n) => Number.isInteger(n) ? String(n) : String(Math.round(n*100)/100);
+    // 변 라벨: 명시되면 그 값, 안 명시(undefined)면 자동 수치, 빈 문자열이면 표시 안 함
+    const baseLabel = parts.length > 5 ? parts[5] : fmt(base);
+    const heightLabel = parts.length > 6 ? parts[6] : fmt(height);
+    const hypLabel = parts.length > 7 ? parts[7] : fmt(hyp);
     const W = 240, H = 200, pad = 36;
     const scale = Math.min((W - 2*pad) / base, (H - 2*pad) / height);
     const x0 = pad, y0 = H - pad;                          // A — 왼쪽 아래(예각)
     const x1 = x0 + base * scale, y1 = y0;                 // C — 오른쪽 아래(직각)
     const x2 = x1, y2 = y0 - height * scale;               // B — 오른쪽 위(예각)
-    const fmt = (n) => Number.isInteger(n) ? n : (Math.round(n*100)/100);
     return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
         <polygon points="${x0},${y0} ${x1},${y1} ${x2},${y2}" fill="#e8f0ff" stroke="#3a5cb8" stroke-width="2"/>
         <rect x="${x1-12}" y="${y1-12}" width="12" height="12" fill="none" stroke="#3a5cb8" stroke-width="1.5"/>
-        <text x="${(x0+x1)/2}" y="${y0+20}" text-anchor="middle" font-size="13" fill="#222">${fmt(base)}</text>
-        <text x="${x1+8}" y="${(y1+y2)/2+4}" font-size="13" fill="#222">${fmt(height)}</text>
-        <text x="${(x0+x2)/2-8}" y="${(y0+y2)/2-6}" text-anchor="end" font-size="13" fill="#222">${fmt(hyp)}</text>
-        <text x="${x0-6}" y="${y0+6}" text-anchor="end" font-size="15" font-weight="700" fill="#c4143a">${lA}</text>
-        <text x="${x2+6}" y="${y2-2}" font-size="15" font-weight="700" fill="#c4143a">${lB}</text>
-        <text x="${x1+6}" y="${y1+18}" font-size="15" font-weight="700" fill="#c4143a">${lC}</text>
+        ${baseLabel ? `<text x="${(x0+x1)/2}" y="${y0+20}" text-anchor="middle" font-size="13" fill="#222">${escapeHTML(baseLabel)}</text>` : ''}
+        ${heightLabel ? `<text x="${x1+8}" y="${(y1+y2)/2+4}" font-size="13" fill="#222">${escapeHTML(heightLabel)}</text>` : ''}
+        ${hypLabel ? `<text x="${(x0+x2)/2-8}" y="${(y0+y2)/2-6}" text-anchor="end" font-size="13" fill="#222">${escapeHTML(hypLabel)}</text>` : ''}
+        <text x="${x0-6}" y="${y0+6}" text-anchor="end" font-size="15" font-weight="700" fill="#c4143a">${escapeHTML(lA)}</text>
+        <text x="${x2+6}" y="${y2-2}" font-size="15" font-weight="700" fill="#c4143a">${escapeHTML(lB)}</text>
+        <text x="${x1+6}" y="${y1+18}" font-size="15" font-weight="700" fill="#c4143a">${escapeHTML(lC)}</text>
     </svg>`;
 }
 
