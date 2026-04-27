@@ -877,3 +877,15 @@ details.dash-section > p { margin-top: 0; }
     .problem { font-size: 18px; padding: 16px; }
     button { min-height: 44px; padding: 12px 22px; }
 }
+
+/* 도형 렌더링 (SVG) */
+.shape-wrap {
+    margin: 8px 0 12px;
+    text-align: center;
+}
+.shape-svg {
+    max-width: 100%;
+    height: auto;
+    display: inline-block;
+    background: #fff;
+}

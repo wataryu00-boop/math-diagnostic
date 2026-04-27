@@ -1524,6 +1524,317 @@ function escapeHTML(s) {
         ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// ─────────────────────────────────────────────────────────
+// 도형 렌더링 — 디스크립터 (CSV "그림" 컬럼) → SVG 문자열
+// 디스크립터 형식: "type:args"  예) "right-triangle:4,3"
+// ─────────────────────────────────────────────────────────
+
+function renderShapeSVG(descriptor) {
+    if (!descriptor || typeof descriptor !== 'string') return '';
+    const colon = descriptor.indexOf(':');
+    if (colon < 0) return '';
+    const type = descriptor.slice(0, colon).trim();
+    const args = descriptor.slice(colon + 1).trim();
+    let svg = '';
+    try {
+        switch (type) {
+            case 'right-triangle': svg = _svgRightTriangle(args); break;
+            case 'triangle-eq': svg = _svgTriangleEq(args); break;
+            case 'venn2': svg = _svgVenn2(args); break;
+            case 'venn3': svg = _svgVenn3(args); break;
+            case 'parabola': svg = _svgParabola(args); break;
+            case 'line': svg = _svgLine(args); break;
+            case 'circle': svg = _svgCircle(args); break;
+            case 'number-line': svg = _svgNumberLine(args); break;
+            case 'coord-points': svg = _svgCoordPoints(args); break;
+            case 'fraction-bar': svg = _svgFractionBar(args); break;
+            default: return '';
+        }
+    } catch (e) {
+        console.warn('shape render error', descriptor, e);
+        return '';
+    }
+    return svg ? `<div class="shape-wrap">${svg}</div>` : '';
+}
+
+// 직각삼각형 — args: "base,height" (예: "4,3" → 4-3-5)
+function _svgRightTriangle(args) {
+    const [bs, hs] = args.split(',').map(s => s.trim());
+    const base = parseFloat(bs), height = parseFloat(hs);
+    if (!isFinite(base) || !isFinite(height) || base <= 0 || height <= 0) return '';
+    const hyp = Math.sqrt(base*base + height*height);
+    const W = 220, H = 180, pad = 30;
+    // 화면 좌표: 원점 (pad, H-pad), x 오른쪽, y 위
+    const sx = (base > height ? (W - 2*pad) / base : (H - 2*pad) / height) ;
+    const scale = Math.min((W - 2*pad) / base, (H - 2*pad) / height);
+    const x0 = pad, y0 = H - pad;
+    const x1 = x0 + base * scale, y1 = y0;          // 밑변 끝(직각)
+    const x2 = x0 + base * scale, y2 = y0 - height * scale; // 위 꼭짓점
+    // hyp: (x0,y0) → (x2,y2)
+    const fmt = (n) => Number.isInteger(n) ? n : (Math.round(n*100)/100);
+    return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+        <polygon points="${x0},${y0} ${x1},${y1} ${x2},${y2}" fill="#e8f0ff" stroke="#3a5cb8" stroke-width="2"/>
+        <rect x="${x1-10}" y="${y1-10}" width="10" height="10" fill="none" stroke="#3a5cb8" stroke-width="1.5"/>
+        <text x="${(x0+x1)/2}" y="${y0+18}" text-anchor="middle" font-size="13" fill="#222">${fmt(base)}</text>
+        <text x="${x1+10}" y="${(y1+y2)/2+4}" font-size="13" fill="#222">${fmt(height)}</text>
+        <text x="${(x0+x2)/2-6}" y="${(y0+y2)/2-4}" text-anchor="end" font-size="13" fill="#222">${fmt(hyp)}</text>
+    </svg>`;
+}
+
+// 정삼각형 — args: "side"
+function _svgTriangleEq(args) {
+    const s = parseFloat(args.trim());
+    if (!isFinite(s) || s <= 0) return '';
+    const W = 200, H = 180, pad = 24;
+    const scale = Math.min((W-2*pad)/s, (H-2*pad)/(s*Math.sqrt(3)/2));
+    const x0 = W/2, y0 = pad + s*Math.sqrt(3)/2*scale;
+    const xL = x0 - s*scale/2, yL = pad;
+    const xR = x0 + s*scale/2, yR = pad;
+    // 잠깐, 위쪽이 꼭짓점이어야. 다시:
+    const top = { x: W/2, y: pad };
+    const bl = { x: W/2 - s*scale/2, y: pad + s*Math.sqrt(3)/2*scale };
+    const br = { x: W/2 + s*scale/2, y: pad + s*Math.sqrt(3)/2*scale };
+    const fmt = (n) => Number.isInteger(n) ? n : Math.round(n*100)/100;
+    return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+        <polygon points="${top.x},${top.y} ${bl.x},${bl.y} ${br.x},${br.y}" fill="#fff5e0" stroke="#c47914" stroke-width="2"/>
+        <text x="${(top.x+bl.x)/2-10}" y="${(top.y+bl.y)/2}" font-size="13" fill="#222">${fmt(s)}</text>
+        <text x="${(top.x+br.x)/2+6}" y="${(top.y+br.y)/2}" font-size="13" fill="#222">${fmt(s)}</text>
+        <text x="${(bl.x+br.x)/2}" y="${bl.y+18}" text-anchor="middle" font-size="13" fill="#222">${fmt(s)}</text>
+    </svg>`;
+}
+
+// 2 집합 벤다이어그램 — args: "1,2,3;2,3,4" 또는 "1,2,3;2,3,4;5,6" (마지막은 U-A-B)
+function _svgVenn2(args) {
+    const parts = args.split(';').map(p => p.split(',').map(s => s.trim()).filter(Boolean));
+    if (parts.length < 2) return '';
+    const A = new Set(parts[0]), B = new Set(parts[1]);
+    const onlyU = parts[2] || [];
+    const inter = [...A].filter(x => B.has(x));
+    const onlyA = [...A].filter(x => !B.has(x));
+    const onlyB = [...B].filter(x => !A.has(x));
+    const W = 280, H = 180;
+    const cAx = 100, cAy = 90, cBx = 180, cBy = 90, r = 60;
+    const fmt = arr => arr.join(', ');
+    return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+        ${onlyU.length ? `<rect x="5" y="5" width="${W-10}" height="${H-10}" fill="#fafafa" stroke="#999" stroke-dasharray="4 3"/>` : ''}
+        <circle cx="${cAx}" cy="${cAy}" r="${r}" fill="#3a5cb8" fill-opacity="0.18" stroke="#3a5cb8" stroke-width="2"/>
+        <circle cx="${cBx}" cy="${cBy}" r="${r}" fill="#c47914" fill-opacity="0.18" stroke="#c47914" stroke-width="2"/>
+        <text x="${cAx-r+8}" y="${cAy-r+12}" font-size="14" font-weight="600" fill="#3a5cb8">A</text>
+        <text x="${cBx+r-18}" y="${cBy-r+12}" font-size="14" font-weight="600" fill="#c47914">B</text>
+        <text x="${cAx-20}" y="${cAy+5}" text-anchor="middle" font-size="12" fill="#222">${fmt(onlyA)}</text>
+        <text x="${(cAx+cBx)/2}" y="${cAy+5}" text-anchor="middle" font-size="12" fill="#222">${fmt(inter)}</text>
+        <text x="${cBx+20}" y="${cBy+5}" text-anchor="middle" font-size="12" fill="#222">${fmt(onlyB)}</text>
+        ${onlyU.length ? `<text x="${W-10}" y="${H-10}" text-anchor="end" font-size="11" fill="#666">U: ${fmt(onlyU)}</text>` : ''}
+    </svg>`;
+}
+
+// 3 집합 벤다이어그램 — args: "A;B;C" (각 set 콤마 구분)
+function _svgVenn3(args) {
+    const parts = args.split(';').map(p => p.split(',').map(s => s.trim()).filter(Boolean));
+    if (parts.length < 3) return '';
+    const W = 280, H = 240;
+    const r = 65;
+    const cAx = 100, cAy = 90;
+    const cBx = 180, cBy = 90;
+    const cCx = 140, cCy = 160;
+    return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+        <circle cx="${cAx}" cy="${cAy}" r="${r}" fill="#3a5cb8" fill-opacity="0.18" stroke="#3a5cb8" stroke-width="2"/>
+        <circle cx="${cBx}" cy="${cBy}" r="${r}" fill="#c47914" fill-opacity="0.18" stroke="#c47914" stroke-width="2"/>
+        <circle cx="${cCx}" cy="${cCy}" r="${r}" fill="#1a7f3c" fill-opacity="0.18" stroke="#1a7f3c" stroke-width="2"/>
+        <text x="${cAx-r+8}" y="${cAy-r+12}" font-size="14" font-weight="600" fill="#3a5cb8">A</text>
+        <text x="${cBx+r-18}" y="${cBy-r+12}" font-size="14" font-weight="600" fill="#c47914">B</text>
+        <text x="${cCx}" y="${cCy+r-4}" text-anchor="middle" font-size="14" font-weight="600" fill="#1a7f3c">C</text>
+    </svg>`;
+}
+
+// 좌표평면 헬퍼
+function _coordCanvas(xMin, xMax, yMin, yMax) {
+    const W = 240, H = 200, pad = 20;
+    const xToPx = x => pad + (x - xMin) / (xMax - xMin) * (W - 2*pad);
+    const yToPx = y => H - pad - (y - yMin) / (yMax - yMin) * (H - 2*pad);
+    const x0 = xToPx(0), y0 = yToPx(0);
+    const axes = `
+        <line x1="${pad}" y1="${y0}" x2="${W-pad}" y2="${y0}" stroke="#666" stroke-width="1"/>
+        <line x1="${x0}" y1="${pad}" x2="${x0}" y2="${H-pad}" stroke="#666" stroke-width="1"/>
+        <text x="${W-pad+4}" y="${y0+4}" font-size="11" fill="#666">x</text>
+        <text x="${x0-4}" y="${pad-4}" text-anchor="end" font-size="11" fill="#666">y</text>
+        <text x="${x0-4}" y="${y0+12}" text-anchor="end" font-size="10" fill="#666">O</text>
+    `;
+    return { W, H, pad, xToPx, yToPx, axes };
+}
+
+// 이차함수 — args: "a,b,c[,xMin,xMax]"   y=ax²+bx+c
+function _svgParabola(args) {
+    const a = args.split(',').map(s => parseFloat(s.trim()));
+    if (a.length < 3 || a.slice(0,3).some(n => !isFinite(n))) return '';
+    const [A, B, C] = a;
+    const xMin = isFinite(a[3]) ? a[3] : -5, xMax = isFinite(a[4]) ? a[4] : 5;
+    // 자동 y 범위
+    const samples = [];
+    for (let i = 0; i <= 40; i++) {
+        const x = xMin + (xMax - xMin) * i / 40;
+        samples.push(A*x*x + B*x + C);
+    }
+    let yMin = Math.min(0, ...samples), yMax = Math.max(0, ...samples);
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const padY = (yMax - yMin) * 0.1;
+    yMin -= padY; yMax += padY;
+    const c = _coordCanvas(xMin, xMax, yMin, yMax);
+    const points = [];
+    for (let i = 0; i <= 60; i++) {
+        const x = xMin + (xMax - xMin) * i / 60;
+        const y = A*x*x + B*x + C;
+        points.push(`${c.xToPx(x).toFixed(1)},${c.yToPx(y).toFixed(1)}`);
+    }
+    // 꼭짓점
+    const vx = -B / (2*A);
+    const vy = A*vx*vx + B*vx + C;
+    const inRange = vx >= xMin && vx <= xMax;
+    return `<svg viewBox="0 0 ${c.W} ${c.H}" class="shape-svg">
+        ${c.axes}
+        <polyline points="${points.join(' ')}" fill="none" stroke="#3a5cb8" stroke-width="2"/>
+        ${inRange ? `<circle cx="${c.xToPx(vx)}" cy="${c.yToPx(vy)}" r="3" fill="#c4143a"/>` : ''}
+    </svg>`;
+}
+
+// 직선 — args: "slope,intercept[,xMin,xMax]"  y=mx+b
+function _svgLine(args) {
+    const a = args.split(',').map(s => parseFloat(s.trim()));
+    if (a.length < 2 || !isFinite(a[0]) || !isFinite(a[1])) return '';
+    const [m, b] = a;
+    const xMin = isFinite(a[2]) ? a[2] : -5, xMax = isFinite(a[3]) ? a[3] : 5;
+    const y1 = m*xMin + b, y2 = m*xMax + b;
+    let yMin = Math.min(0, y1, y2), yMax = Math.max(0, y1, y2);
+    if (yMin === yMax) { yMin -= 1; yMax += 1; }
+    const c = _coordCanvas(xMin, xMax, yMin, yMax);
+    return `<svg viewBox="0 0 ${c.W} ${c.H}" class="shape-svg">
+        ${c.axes}
+        <line x1="${c.xToPx(xMin)}" y1="${c.yToPx(y1)}" x2="${c.xToPx(xMax)}" y2="${c.yToPx(y2)}" stroke="#3a5cb8" stroke-width="2"/>
+    </svg>`;
+}
+
+// 원 — args: "r" 또는 "r,cx,cy"
+function _svgCircle(args) {
+    const a = args.split(',').map(s => parseFloat(s.trim()));
+    if (!isFinite(a[0]) || a[0] <= 0) return '';
+    const r = a[0], cx = isFinite(a[1]) ? a[1] : 0, cy = isFinite(a[2]) ? a[2] : 0;
+    const pad = r * 0.3;
+    const xMin = cx - r - pad, xMax = cx + r + pad;
+    const yMin = cy - r - pad, yMax = cy + r + pad;
+    const c = _coordCanvas(xMin, xMax, yMin, yMax);
+    const px = c.xToPx(cx), py = c.yToPx(cy);
+    const pr = (c.xToPx(cx + r) - c.xToPx(cx));
+    return `<svg viewBox="0 0 ${c.W} ${c.H}" class="shape-svg">
+        ${c.axes}
+        <circle cx="${px}" cy="${py}" r="${pr}" fill="none" stroke="#c4143a" stroke-width="2"/>
+        <circle cx="${px}" cy="${py}" r="2" fill="#c4143a"/>
+    </svg>`;
+}
+
+// 수직선 — args: "lo,hi,marks"  marks 형식: "2,5" (점) 또는 ">=2" "1<x<3" "x<=2 또는 x>=5" 등
+function _svgNumberLine(args) {
+    const m = args.match(/^(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)(?:,(.*))?$/);
+    if (!m) return '';
+    const lo = parseFloat(m[1]), hi = parseFloat(m[2]);
+    const marks = (m[3] || '').trim();
+    const W = 320, H = 80, pad = 24;
+    const xToPx = x => pad + (x - lo) / (hi - lo) * (W - 2*pad);
+    const ticks = [];
+    for (let i = Math.ceil(lo); i <= Math.floor(hi); i++) {
+        const x = xToPx(i);
+        ticks.push(`<line x1="${x}" y1="${H/2-4}" x2="${x}" y2="${H/2+4}" stroke="#666" stroke-width="1"/>
+            <text x="${x}" y="${H/2+18}" text-anchor="middle" font-size="11" fill="#444">${i}</text>`);
+    }
+    // marks 해석
+    let extras = '';
+    if (marks) {
+        // 구간 표현: "a<=x<=b" "a<x<b" "x>=a" "x<=a"
+        const intM = marks.match(/^(-?\d+(?:\.\d+)?)\s*(<=?)\s*x\s*(<=?)\s*(-?\d+(?:\.\d+)?)$/);
+        const ge = marks.match(/^x\s*(>=?)\s*(-?\d+(?:\.\d+)?)$/);
+        const le = marks.match(/^x\s*(<=?)\s*(-?\d+(?:\.\d+)?)$/);
+        if (intM) {
+            const a = parseFloat(intM[1]), b = parseFloat(intM[4]);
+            const closedA = intM[2] === '<=', closedB = intM[3] === '<=';
+            extras += `<line x1="${xToPx(a)}" y1="${H/2}" x2="${xToPx(b)}" y2="${H/2}" stroke="#c4143a" stroke-width="3"/>`;
+            extras += `<circle cx="${xToPx(a)}" cy="${H/2}" r="4" fill="${closedA ? '#c4143a' : '#fff'}" stroke="#c4143a" stroke-width="2"/>`;
+            extras += `<circle cx="${xToPx(b)}" cy="${H/2}" r="4" fill="${closedB ? '#c4143a' : '#fff'}" stroke="#c4143a" stroke-width="2"/>`;
+        } else if (ge) {
+            const a = parseFloat(ge[2]), closed = ge[1] === '>=';
+            extras += `<line x1="${xToPx(a)}" y1="${H/2}" x2="${W-pad}" y2="${H/2}" stroke="#c4143a" stroke-width="3"/>`;
+            extras += `<circle cx="${xToPx(a)}" cy="${H/2}" r="4" fill="${closed ? '#c4143a' : '#fff'}" stroke="#c4143a" stroke-width="2"/>`;
+        } else if (le) {
+            const a = parseFloat(le[2]), closed = le[1] === '<=';
+            extras += `<line x1="${pad}" y1="${H/2}" x2="${xToPx(a)}" y2="${H/2}" stroke="#c4143a" stroke-width="3"/>`;
+            extras += `<circle cx="${xToPx(a)}" cy="${H/2}" r="4" fill="${closed ? '#c4143a' : '#fff'}" stroke="#c4143a" stroke-width="2"/>`;
+        } else {
+            // 점 나열
+            for (const tok of marks.split(',').map(s => s.trim()).filter(Boolean)) {
+                const v = parseFloat(tok);
+                if (isFinite(v) && v >= lo && v <= hi) {
+                    extras += `<circle cx="${xToPx(v)}" cy="${H/2}" r="5" fill="#c4143a"/>`;
+                }
+            }
+        }
+    }
+    return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+        <line x1="${pad-4}" y1="${H/2}" x2="${W-pad+4}" y2="${H/2}" stroke="#444" stroke-width="1"/>
+        <polygon points="${W-pad+4},${H/2} ${W-pad-2},${H/2-4} ${W-pad-2},${H/2+4}" fill="#444"/>
+        <polygon points="${pad-4},${H/2} ${pad+2},${H/2-4} ${pad+2},${H/2+4}" fill="#444"/>
+        ${ticks.join('')}
+        ${extras}
+    </svg>`;
+}
+
+// 좌표평면 위 점들 + 선분 — args: "(x1,y1),(x2,y2),..."
+function _svgCoordPoints(args) {
+    const ptRe = /\(\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\)/g;
+    const pts = [];
+    let mm;
+    while ((mm = ptRe.exec(args)) !== null) {
+        pts.push([parseFloat(mm[1]), parseFloat(mm[2])]);
+    }
+    if (pts.length === 0) return '';
+    const xs = pts.map(p => p[0]), ys = pts.map(p => p[1]);
+    let xMin = Math.min(0, ...xs), xMax = Math.max(0, ...xs);
+    let yMin = Math.min(0, ...ys), yMax = Math.max(0, ...ys);
+    const pX = Math.max(1, (xMax - xMin) * 0.15);
+    const pY = Math.max(1, (yMax - yMin) * 0.15);
+    xMin -= pX; xMax += pX; yMin -= pY; yMax += pY;
+    const c = _coordCanvas(xMin, xMax, yMin, yMax);
+    const dots = pts.map(([x, y]) =>
+        `<circle cx="${c.xToPx(x)}" cy="${c.yToPx(y)}" r="4" fill="#c4143a"/>
+         <text x="${c.xToPx(x)+6}" y="${c.yToPx(y)-6}" font-size="11" fill="#222">(${x},${y})</text>`
+    ).join('');
+    let lines = '';
+    if (pts.length === 2) {
+        const [p1, p2] = pts;
+        lines = `<line x1="${c.xToPx(p1[0])}" y1="${c.yToPx(p1[1])}" x2="${c.xToPx(p2[0])}" y2="${c.yToPx(p2[1])}" stroke="#3a5cb8" stroke-width="2" stroke-dasharray="4 3"/>`;
+    }
+    return `<svg viewBox="0 0 ${c.W} ${c.H}" class="shape-svg">
+        ${c.axes}
+        ${lines}
+        ${dots}
+    </svg>`;
+}
+
+// 분수 막대 — args: "filled,total"  예 "3,4"
+function _svgFractionBar(args) {
+    const [fs, ts] = args.split(',').map(s => s.trim());
+    const filled = parseInt(fs), total = parseInt(ts);
+    if (!isFinite(filled) || !isFinite(total) || total <= 0) return '';
+    const W = 280, H = 60, pad = 10;
+    const segW = (W - 2*pad) / total;
+    let segs = '';
+    for (let i = 0; i < total; i++) {
+        const fill = i < filled ? '#3a5cb8' : '#fff';
+        segs += `<rect x="${pad + i*segW}" y="${pad}" width="${segW}" height="${H-2*pad}" fill="${fill}" stroke="#3a5cb8" stroke-width="1.5"/>`;
+    }
+    return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+        ${segs}
+        <text x="${W/2}" y="${H-pad+18}" text-anchor="middle" font-size="13" fill="#444">${filled} / ${total}</text>
+    </svg>`;
+}
+
 // 한글/비한글 토큰화 → 수학 chunk 만 KaTeX 렌더
 function _isKoreanChar(ch) {
     return /[ㄱ-힝一-鿿]/.test(ch);
@@ -1931,7 +2242,7 @@ function renderDx() {
                 <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
                 <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검${dx.phase === 'gradeSearch' ? ' · <span style="color:#0a7">빠른 학년 추정 중</span>' : ''}</div>
                 ${dx.bracketEstimate !== null ? `<div class="meta" style="margin-top:4px">📊 빠른 추정: <b>${_gradeLabel(dx.bracketEstimate)} 수준</b> (이후 자세한 진단 진행 중)</div>` : ''}
-                <div class="problem">${formatMath(p['문제'])}</div>
+                <div class="problem">${formatMath(p['문제'])}</div>${renderShapeSVG(p['그림'])}
                 ${renderChoices(dx.currentChoices, dx.selectedIndex, false, 'selectDxChoice')}
                 <button class="primary block" onclick="submitDxAnswer()" ${dx.selectedIndex === null ? 'disabled' : ''}>확인</button>
                 <button class="block" onclick="skipDxAnswer()">잘 모르겠어요</button>
@@ -1949,7 +2260,7 @@ function renderDx() {
                     <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
                     <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검${dx.phase === 'gradeSearch' ? ' · <span style="color:#0a7">빠른 학년 추정 중</span>' : ''}</div>
                 ${dx.bracketEstimate !== null ? `<div class="meta" style="margin-top:4px">📊 빠른 추정: <b>${_gradeLabel(dx.bracketEstimate)} 수준</b> (이후 자세한 진단 진행 중)</div>` : ''}
-                    <div class="problem">${formatMath(p['문제'])}</div>
+                    <div class="problem">${formatMath(p['문제'])}</div>${renderShapeSVG(p['그림'])}
                     ${renderChoices(dx.currentChoices, dx.selectedIndex, true, 'selectDxChoice')}
                     <div class="correct correct-flash">✓ 정답입니다!</div>
                     <div class="auto-advance">잠시 후 다음 문제로 넘어갑니다...</div>
@@ -1961,7 +2272,7 @@ function renderDx() {
                 <div class="progress-bar"><div class="progress-fill" style="width:${progress}%"></div></div>
                 <div class="meta">진단 ${askedCount}번째 문제 · ${escapeHTML(concept['개념명'])} 점검${dx.phase === 'gradeSearch' ? ' · <span style="color:#0a7">빠른 학년 추정 중</span>' : ''}</div>
                 ${dx.bracketEstimate !== null ? `<div class="meta" style="margin-top:4px">📊 빠른 추정: <b>${_gradeLabel(dx.bracketEstimate)} 수준</b> (이후 자세한 진단 진행 중)</div>` : ''}
-                <div class="problem">${formatMath(p['문제'])}</div>
+                <div class="problem">${formatMath(p['문제'])}</div>${renderShapeSVG(p['그림'])}
                 ${renderChoices(dx.currentChoices, dx.selectedIndex, true, 'selectDxChoice')}
                 <div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>
                 ${chosen?.explanation
@@ -2114,7 +2425,7 @@ function renderPractice() {
         return `
             <div class="card">
                 <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])} · 정답 ${pr.correctCount}/${PRACTICE_TARGET_CORRECT}</div>
-                <div class="problem">${formatMath(p['문제'])}</div>
+                <div class="problem">${formatMath(p['문제'])}</div>${renderShapeSVG(p['그림'])}
                 ${renderChoices(pr.currentChoices, pr.selectedIndex, false, 'selectPracticeChoice')}
                 <button class="primary block" onclick="submitPracticeAnswer()" ${pr.selectedIndex === null ? 'disabled' : ''}>확인</button>
                 <button class="block" onclick="backToResult()">결과로 돌아가기</button>
@@ -2126,7 +2437,7 @@ function renderPractice() {
             return `
                 <div class="card">
                     <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])} · 정답 ${pr.correctCount}/${PRACTICE_TARGET_CORRECT}</div>
-                    <div class="problem">${formatMath(p['문제'])}</div>
+                    <div class="problem">${formatMath(p['문제'])}</div>${renderShapeSVG(p['그림'])}
                     ${renderChoices(pr.currentChoices, pr.selectedIndex, true, 'selectPracticeChoice')}
                     <div class="correct correct-flash">✓ 정답입니다!</div>
                     <div class="auto-advance">잠시 후 다음 문제로 넘어갑니다...</div>
@@ -2136,7 +2447,7 @@ function renderPractice() {
         return `
             <div class="card">
                 <div class="meta">학습 중: ${escapeHTML(concept['개념명'])} · 난이도 ${escapeHTML(p['난이도'])} · 정답 ${pr.correctCount}/${PRACTICE_TARGET_CORRECT}</div>
-                <div class="problem">${formatMath(p['문제'])}</div>
+                <div class="problem">${formatMath(p['문제'])}</div>${renderShapeSVG(p['그림'])}
                 ${renderChoices(pr.currentChoices, pr.selectedIndex, true, 'selectPracticeChoice')}
                 <div class="wrong">✗ 정답은 <b>${formatMath(p['정답'])}</b></div>
                 ${chosen?.explanation
@@ -2624,6 +2935,7 @@ function renderConceptStudy() {
 
             <h3>설명</h3>
             <p style="line-height:1.7">${formatMath(description)}</p>
+            ${renderShapeSVG(c['그림'])}
 
             ${example ? `
                 <h3>예시</h3>
@@ -2715,7 +3027,7 @@ function renderTeacherConceptProblems() {
             ${problems.map((p, idx) => `
                 <div class="problem-card">
                     <div class="meta">[${p['문제ID']}] 난이도 ${p['난이도']} · ${escapeHTML(p['용도'])} · ${escapeHTML(p['유형'] || '')}</div>
-                    <div class="problem">${formatMath(p['문제'])}</div>
+                    <div class="problem">${formatMath(p['문제'])}</div>${renderShapeSVG(p['그림'])}
                     <div class="correct" style="margin:8px 0">정답: <b>${formatMath(p['정답'])}</b></div>
                     <div class="solution">💡 ${formatMath(p['해설'])}</div>
 
