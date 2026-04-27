@@ -1548,6 +1548,8 @@ function renderShapeSVG(descriptor) {
             case 'number-line': svg = _svgNumberLine(args); break;
             case 'coord-points': svg = _svgCoordPoints(args); break;
             case 'fraction-bar': svg = _svgFractionBar(args); break;
+            case 'algebra-tile': svg = _svgAlgebraTile(args); break;
+            case 'square-root': svg = _svgSquareRoot(args); break;
             default: return '';
         }
     } catch (e) {
@@ -1827,6 +1829,88 @@ function _svgCoordPoints(args) {
         ${c.axes}
         ${lines}
         ${dots}
+    </svg>`;
+}
+
+// 곱셈공식·인수분해 시각화 — 정사각형/직사각형 분할
+//   args: "(a+b)^2"   → (a+b)² 면적 분할 — 한 변 a+b 정사각형 4분할 a², ab, ab, b²
+//   args: "(a+b)(a-b)"→ a²-b² 직사각형 시각화 (대각선 b² 제거)
+//   args: "(x+a)(x+b)"→ (x+a)(x+b) 직사각형 4분할 x², ax, bx, ab
+function _svgAlgebraTile(args) {
+    const t = args.trim();
+    const W = 220, H = 200, pad = 30;
+    const A = 100, B = 60; // 시각적 비율 (a, b)
+    const x0 = pad, y0 = pad;
+    if (t === '(a+b)^2' || t === '(a+b)²') {
+        // 한 변 a+b 정사각형. 좌상 a², 우상 ab, 좌하 ab, 우하 b²
+        return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+            <rect x="${x0}" y="${y0}" width="${A}" height="${A}" fill="#cfe5cf" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0+A}" y="${y0}" width="${B}" height="${A}" fill="#fff5d6" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0}" y="${y0+A}" width="${A}" height="${B}" fill="#fff5d6" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0+A}" y="${y0+A}" width="${B}" height="${B}" fill="#f5d0d0" stroke="#1a7f3c" stroke-width="2"/>
+            <text x="${x0+A/2}" y="${y0+A/2+5}" text-anchor="middle" font-size="16" font-weight="600" fill="#1a4d1a">a²</text>
+            <text x="${x0+A+B/2}" y="${y0+A/2+5}" text-anchor="middle" font-size="14" fill="#5a4d00">ab</text>
+            <text x="${x0+A/2}" y="${y0+A+B/2+5}" text-anchor="middle" font-size="14" fill="#5a4d00">ab</text>
+            <text x="${x0+A+B/2}" y="${y0+A+B/2+5}" text-anchor="middle" font-size="14" font-weight="600" fill="#7c1a14">b²</text>
+            <text x="${x0+A/2}" y="${y0-6}" text-anchor="middle" font-size="12" fill="#444">a</text>
+            <text x="${x0+A+B/2}" y="${y0-6}" text-anchor="middle" font-size="12" fill="#444">b</text>
+            <text x="${x0-6}" y="${y0+A/2+4}" text-anchor="end" font-size="12" fill="#444">a</text>
+            <text x="${x0-6}" y="${y0+A+B/2+4}" text-anchor="end" font-size="12" fill="#444">b</text>
+        </svg>`;
+    }
+    if (t === '(a-b)^2' || t === '(a-b)²') {
+        // 한 변 a 정사각형에서 b 만큼 잘라내기 시각화
+        return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+            <rect x="${x0}" y="${y0}" width="${A}" height="${A}" fill="#cfe5cf" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0+A-B}" y="${y0}" width="${B}" height="${A-B}" fill="#fff5d6" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0}" y="${y0+A-B}" width="${A-B}" height="${B}" fill="#fff5d6" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0+A-B}" y="${y0+A-B}" width="${B}" height="${B}" fill="#f5d0d0" stroke="#1a7f3c" stroke-width="2"/>
+            <text x="${x0+(A-B)/2}" y="${y0+(A-B)/2+5}" text-anchor="middle" font-size="14" font-weight="600" fill="#1a4d1a">(a-b)²</text>
+            <text x="${x0-6}" y="${y0+A/2+4}" text-anchor="end" font-size="12" fill="#444">a</text>
+            <text x="${x0+A/2}" y="${y0-6}" text-anchor="middle" font-size="12" fill="#444">a</text>
+            <text x="${x0+A-B/2}" y="${y0+A+12}" text-anchor="middle" font-size="11" fill="#7c1a14">b</text>
+        </svg>`;
+    }
+    if (t === '(a+b)(a-b)' || t === '(x+a)(x-a)') {
+        return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+            <rect x="${x0}" y="${y0}" width="${A}" height="${A}" fill="#cfe5cf" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0+A-B}" y="${y0+A-B}" width="${B}" height="${B}" fill="#f5d0d0" stroke="#7c1a14" stroke-width="2" stroke-dasharray="4 3"/>
+            <text x="${x0+A/2}" y="${y0+A/2+5}" text-anchor="middle" font-size="16" font-weight="600" fill="#1a4d1a">a²</text>
+            <text x="${x0+A-B/2}" y="${y0+A-B/2+5}" text-anchor="middle" font-size="14" font-weight="600" fill="#7c1a14">- b²</text>
+            <text x="${x0+A/2}" y="${y0-6}" text-anchor="middle" font-size="12" fill="#444">a</text>
+            <text x="${x0-6}" y="${y0+A/2+4}" text-anchor="end" font-size="12" fill="#444">a</text>
+        </svg>`;
+    }
+    if (t === '(x+a)(x+b)') {
+        return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+            <rect x="${x0}" y="${y0}" width="${A}" height="${A}" fill="#cfe5cf" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0+A}" y="${y0}" width="${B}" height="${A}" fill="#fff5d6" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0}" y="${y0+A}" width="${A}" height="${B}" fill="#e0e8ff" stroke="#1a7f3c" stroke-width="2"/>
+            <rect x="${x0+A}" y="${y0+A}" width="${B}" height="${B}" fill="#f5d0d0" stroke="#1a7f3c" stroke-width="2"/>
+            <text x="${x0+A/2}" y="${y0+A/2+5}" text-anchor="middle" font-size="16" font-weight="600" fill="#1a4d1a">x²</text>
+            <text x="${x0+A+B/2}" y="${y0+A/2+5}" text-anchor="middle" font-size="13" fill="#5a4d00">ax</text>
+            <text x="${x0+A/2}" y="${y0+A+B/2+5}" text-anchor="middle" font-size="13" fill="#2540a8">bx</text>
+            <text x="${x0+A+B/2}" y="${y0+A+B/2+5}" text-anchor="middle" font-size="13" font-weight="600" fill="#7c1a14">ab</text>
+            <text x="${x0+A/2}" y="${y0-6}" text-anchor="middle" font-size="12" fill="#444">x</text>
+            <text x="${x0+A+B/2}" y="${y0-6}" text-anchor="middle" font-size="12" fill="#444">a</text>
+            <text x="${x0-6}" y="${y0+A/2+4}" text-anchor="end" font-size="12" fill="#444">x</text>
+            <text x="${x0-6}" y="${y0+A+B/2+4}" text-anchor="end" font-size="12" fill="#444">b</text>
+        </svg>`;
+    }
+    return '';
+}
+
+// 제곱근 시각화 — args: "n"  (한 변 √n 인 정사각형, 면적 n)
+function _svgSquareRoot(args) {
+    const n = parseFloat(args.trim());
+    if (!isFinite(n) || n <= 0) return '';
+    const W = 200, H = 180, pad = 30;
+    const side = Math.min(W, H) - 2*pad;
+    const fmt = Number.isInteger(n) ? n : Math.round(n*100)/100;
+    return `<svg viewBox="0 0 ${W} ${H}" class="shape-svg">
+        <rect x="${pad}" y="${pad}" width="${side}" height="${side}" fill="#e8f0ff" stroke="#3a5cb8" stroke-width="2"/>
+        <text x="${pad+side/2}" y="${pad+side/2+5}" text-anchor="middle" font-size="16" font-weight="600" fill="#1a2a5a">면적 = ${fmt}</text>
+        <text x="${pad+side/2}" y="${pad-8}" text-anchor="middle" font-size="13" fill="#444">한 변 = √${fmt}</text>
     </svg>`;
 }
 
