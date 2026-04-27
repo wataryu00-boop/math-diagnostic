@@ -1840,17 +1840,19 @@ function renderWelcome() {
                 })()}
                 ${state.masteryListFilter ? renderMasteryList(state.masteryListFilter) : ''}
 
-                <h3>영역별 진척도</h3>
-                <div class="area-progress">
-                    ${Object.entries(byArea).map(([area, stats]) => {
-                        const pct = stats.total > 0 ? Math.round(stats.mastered / stats.total * 100) : 0;
-                        return `<div class="area-row">
-                            <span class="area-name">${escapeHTML(area)}</span>
-                            <div class="area-bar"><div class="area-fill" style="width:${pct}%"></div></div>
-                            <span class="area-frac">${stats.mastered}/${stats.total}</span>
-                        </div>`;
-                    }).join('')}
-                </div>
+                <details class="area-progress-details">
+                    <summary><h3>영역별 진척도</h3></summary>
+                    <div class="area-progress">
+                        ${Object.entries(byArea).map(([area, stats]) => {
+                            const pct = stats.total > 0 ? Math.round(stats.mastered / stats.total * 100) : 0;
+                            return `<div class="area-row">
+                                <span class="area-name">${escapeHTML(area)}</span>
+                                <div class="area-bar"><div class="area-fill" style="width:${pct}%"></div></div>
+                                <span class="area-frac">${stats.mastered}/${stats.total}</span>
+                            </div>`;
+                        }).join('')}
+                    </div>
+                </details>
 
                 ${topWeak.length > 0 ? `
                     <h3>⚠️ 현재 약점 TOP ${topWeak.length}</h3>

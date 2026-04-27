@@ -556,8 +556,26 @@ button.link-btn {
     background: #fff;
 }
 
-/* 영역별 진척도 막대 */
-.area-progress { margin: 8px 0 16px; }
+/* 영역별 진척도 막대 — 기본 접힘 */
+.area-progress-details { margin: 0 0 16px; }
+.area-progress-details > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    padding: 4px 0;
+}
+.area-progress-details > summary::-webkit-details-marker { display: none; }
+.area-progress-details > summary > h3 {
+    display: inline-block;
+    margin: 0;
+}
+.area-progress-details > summary::after {
+    content: " ▾";
+    color: #6a8a9a;
+    font-size: 14px;
+}
+.area-progress-details[open] > summary::after { content: " ▴"; }
+.area-progress { margin: 8px 0 0; }
 .area-row {
     display: flex;
     align-items: center;
