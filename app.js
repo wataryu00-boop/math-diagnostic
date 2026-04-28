@@ -2051,7 +2051,7 @@ function _convertMathChunk(s) {
     let t = s;
     // 입력의 중괄호 { } 는 집합 표기이므로 LaTeX 그룹화 의미와 충돌하지 않게
     // 임시 토큰으로 치환했다가 마지막에 \{ \} 로 복원
-    t = t.replace(/\{/g, 'LBRACE').replace(/\}/g, 'RBRACE');
+    t = t.replace(/\{/g, '\uE001').replace(/\}/g, '\uE002');
     // Unicode 위첨자 codepoint 매핑 (명시적 escape — 어떤 입력 인코딩이든 동일하게 매칭)
     // ⁰=2070 ¹=00B9 ²=00B2 ³=00B3 ⁴=2074 ⁵=2075 ⁶=2076 ⁷=2077 ⁸=2078 ⁹=2079 ⁻=207B
     const SUP_DIGIT_CLASS = '[⁰¹²³⁴⁵⁶⁷⁸⁹]';
@@ -2112,7 +2112,7 @@ function _convertMathChunk(s) {
     t = t.replace(/∩/g, '\\cap ');
     t = t.replace(/∅/g, '\\emptyset ');
     // 입력 중괄호 복원 — LBRACE/RBRACE 토큰 → 텍스트 모드 \{ \}
-    t = t.replace(/LBRACE/g, '\\{').replace(/RBRACE/g, '\\}');
+    t = t.replace(/\uE001/g, '\\{').replace(/\uE002/g, '\\}');
     return t;
 }
 
@@ -2174,7 +2174,7 @@ function formatMath(s) {
                 const latex = _convertMathChunk(core);
                 try {
                     html = katex.renderToString(latex, {
-                        throwOnError: false,
+                        throwOnError: true,
                         displayMode: false,
                         output: 'html',
                         strict: false,
