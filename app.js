@@ -972,13 +972,16 @@ function pickProblem(conceptId, opts = {}) {
         .filter(p => !askedDx.has(p['문제ID']) && !askedPr.has(p['문제ID']));
     if (pool.length === 0) return null;
     if (opts.diagnostic) {
+        // 진단은 교사 검수된 진단 풀에서만 출제 (자동 생성 학습 문제 차단)
+        const diagPool = pool.filter(p => (p['용도'] || '').trim() === '진단');
+        if (diagPool.length === 0) return null;
         const target = opts.targetLevel || 2;
         // 1순위: 정확히 같은 난이도 중 랜덤
-        const exact = pool.filter(p => parseInt(p['난이도']) === target);
+        const exact = diagPool.filter(p => parseInt(p['난이도']) === target);
         if (exact.length > 0) return exact[Math.floor(Math.random() * exact.length)];
         // 2순위: ±1 이내
-        const close = pool.filter(p => Math.abs(parseInt(p['난이도']) - target) <= 1);
-        const candidates = close.length > 0 ? close : pool;
+        const close = diagPool.filter(p => Math.abs(parseInt(p['난이도']) - target) <= 1);
+        const candidates = close.length > 0 ? close : diagPool;
         return candidates[Math.floor(Math.random() * candidates.length)];
     }
     pool.sort((a, b) => parseInt(a['난이도']) - parseInt(b['난이도']));
