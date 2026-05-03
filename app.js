@@ -11,8 +11,8 @@ const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 const state = {
     concepts: [],
     conceptsById: {},
-    problems: [],
-    problemsByConceptId: {},
+    problemsIndex: {},        // { conceptId: { level: count } } — 시작 시 로드
+    problemsByConceptId: {},  // { conceptId: [problem...] } — lazy fetch 캐시
     mode: 'welcome',         // welcome | dx | result | practice | history | pastResult | teacherStudent
     user: null,              // Supabase user object
     profile: null,           // { id, username, role }
@@ -105,17 +105,41 @@ function parseCSV(text) {
         });
 }
 
+async function loadJSON(url) {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`${url} 로드 실패 (HTTP ${res.status})`);
+    return res.json();
+}
+
+// 그 개념의 모든 난도 파일을 lazy fetch + 캐시.
+// 이미 로드돼 있으면 즉시 반환. 동시 호출 안전.
+const _conceptLoadPromises = {};
+async function ensureConceptLoaded(conceptId) {
+    if (state.problemsByConceptId[conceptId]) return;
+    if (_conceptLoadPromises[conceptId]) return _conceptLoadPromises[conceptId];
+    const levels = state.problemsIndex[conceptId] || {};
+    const levelKeys = Object.keys(levels).filter(k => levels[k] > 0);
+    _conceptLoadPromises[conceptId] = (async () => {
+        try {
+            const arrays = await Promise.all(
+                levelKeys.map(lvl => loadCSV(`problems/${conceptId}/${lvl}.csv`))
+            );
+            state.problemsByConceptId[conceptId] = arrays.flat();
+        } finally {
+            delete _conceptLoadPromises[conceptId];
+        }
+    })();
+    return _conceptLoadPromises[conceptId];
+}
+
 async function init() {
     try {
         state.concepts = await loadCSV('concepts.csv');
         state.concepts.forEach(c => state.conceptsById[c['개념ID']] = c);
 
-        state.problems = await loadCSV('problems.csv');
-        state.problems.forEach(p => {
-            const cid = p['점검개념ID'];
-            if (!state.problemsByConceptId[cid]) state.problemsByConceptId[cid] = [];
-            state.problemsByConceptId[cid].push(p);
-        });
+        // 시작 시에는 문제 인덱스만 로드 (개념 × 난도 파일별 카운트).
+        // 실제 문제 데이터는 진단/연습/조회 진입 시 lazy fetch.
+        state.problemsIndex = await loadJSON('problems/_index.json');
 
         const { data } = await sb.auth.getSession();
         if (data?.session) {
@@ -1118,7 +1142,7 @@ function _transitionToConceptPhase() {
     state.dx.queue = buildDynamicBattery();
 }
 
-function nextDxQuestion() {
+async function nextDxQuestion() {
     state.dx.showingFeedback = false;
     state.dx.selectedIndex = null;
     state.dx.lastInferred = null;
@@ -1139,6 +1163,7 @@ function nextDxQuestion() {
         } else {
             const mid = (b.low + b.high) >> 1;
             const anchor = GRADE_ANCHORS[mid];
+            await ensureConceptLoaded(anchor.conceptId);
             // 일관된 난이도 2 로 이분 탐색 (mastery 영향 X)
             const problem = pickProblem(anchor.conceptId, { diagnostic: true, targetLevel: 2 });
             if (problem) {
@@ -1163,6 +1188,7 @@ function nextDxQuestion() {
         const alreadyTested = state.dx.history.some(h => h.conceptId === conceptId);
         if (alreadyTested) continue;
         const targetLevel = getMasteryLevel(state.mastery?.[conceptId]);
+        await ensureConceptLoaded(conceptId);
         const problem = pickProblem(conceptId, { diagnostic: true, targetLevel });
         if (problem) {
             state.dx.currentProblem = problem;
@@ -1351,8 +1377,9 @@ function startPracticeFromStudy() {
     }
 }
 
-function startPractice(conceptId) {
+async function startPractice(conceptId) {
     state.mode = 'practice';
+    await ensureConceptLoaded(conceptId);
     const pool = [...(state.problemsByConceptId[conceptId] || [])];
     pool.sort((a, b) => parseInt(a['난이도']) - parseInt(b['난이도']));
     state.practice = {
@@ -3188,9 +3215,10 @@ function viewProblemBank() {
     render();
 }
 
-function viewConceptProblems(conceptId) {
+async function viewConceptProblems(conceptId) {
     state.viewConceptId = conceptId;
     state.mode = 'teacherConceptProblems';
+    await ensureConceptLoaded(conceptId);
     render();
 }
 
@@ -3216,7 +3244,8 @@ function renderTeacherProblems() {
                 <h3>${escapeHTML(area)} (${list.length})</h3>
                 <ul class="weakness-list">
                     ${list.map(c => {
-                        const count = (state.problemsByConceptId[c['개념ID']] || []).length;
+                        const levels = state.problemsIndex[c['개념ID']] || {};
+                        const count = Object.values(levels).reduce((a, b) => a + b, 0);
                         return `<li class="student-row" onclick="viewConceptProblems('${c['개념ID']}')">
                             <b>${c['개념ID']} ${escapeHTML(c['개념명'])}</b>
                             <span class="meta">· 문제 ${count}개 · ${escapeHTML(c['학년단계'])}</span>
