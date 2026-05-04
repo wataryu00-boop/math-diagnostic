@@ -119,7 +119,8 @@ async function ensureConceptLoaded(conceptId) {
     if (state.problemsByConceptId[conceptId]) return;
     if (_conceptLoadPromises[conceptId]) return _conceptLoadPromises[conceptId];
     const levels = state.problemsIndex[conceptId] || {};
-    const levelKeys = Object.keys(levels).filter(k => levels[k] > 0);
+    // _ 접두 키(_pending 등)는 메타데이터이므로 fetch 대상에서 제외
+    const levelKeys = Object.keys(levels).filter(k => !k.startsWith('_') && levels[k] > 0);
     _conceptLoadPromises[conceptId] = (async () => {
         try {
             const arrays = await Promise.all(
@@ -3386,7 +3387,9 @@ function renderTeacherProblems() {
                 <ul class="weakness-list">
                     ${list.map(c => {
                         const levels = state.problemsIndex[c['개념ID']] || {};
-                        const count = Object.values(levels).reduce((a, b) => a + b, 0);
+                        const count = Object.entries(levels)
+                            .filter(([k]) => !k.startsWith('_'))
+                            .reduce((a, [, n]) => a + n, 0);
                         return `<li class="student-row" onclick="viewConceptProblems('${c['개념ID']}')">
                             <b>${c['개념ID']} ${escapeHTML(c['개념명'])}</b>
                             <span class="meta">· 문제 ${count}개 · ${escapeHTML(c['학년단계'])}</span>
