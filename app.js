@@ -30,6 +30,7 @@ const state = {
     expandedClassConcept: null, // { kind: 'weak'|'suspected', cid } — 대시보드에서 펼쳐진 개념
     studyConceptId: null,    // 학생 - 개념 설명 페이지에서 보고 있는 개념
     viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
+    viewCandidateCid: null,  // 선생님 - 진단 후보 검토에서 선택한 개념
     mastery: null,           // { [conceptId]: { correct_streak, total_seen, total_correct, ... } }
     masteryListFilter: null, // 'mastered' | 'developing' | 'weak' | 'untouched' | null
     recomputeBusy: false,    // 재계산 중 여부
@@ -2237,6 +2238,8 @@ function render() {
         else if (state.mode === 'pastResult') root.innerHTML = renderPastResult();
         else if (state.mode === 'teacherProblems') root.innerHTML = renderTeacherProblems();
         else if (state.mode === 'teacherConceptProblems') root.innerHTML = renderTeacherConceptProblems();
+        else if (state.mode === 'teacherCandidates') root.innerHTML = renderTeacherCandidates();
+        else if (state.mode === 'teacherCandidateConcept') root.innerHTML = renderTeacherCandidateConcept();
         else root.innerHTML = renderTeacherDashboard();
     }
     else if (state.mode === 'admin') root.innerHTML = renderAdminPrompt();
@@ -2933,6 +2936,16 @@ function renderTeacherDashboard() {
 
             <button class="block" onclick="viewProblemBank()" style="margin-top:8px">📚 문제 은행 둘러보기</button>
 
+            ${(() => {
+                const totalPending = Object.values(state.problemsIndex || {})
+                    .reduce((s, lvls) => s + (lvls._pending || 0), 0);
+                const conceptsWith = Object.entries(state.problemsIndex || {})
+                    .filter(([, lvls]) => (lvls._pending || 0) > 0).length;
+                return totalPending > 0
+                    ? `<button class="block" onclick="viewCandidateReview()" style="margin-top:8px">🔍 진단 후보 검토 <span class="meta">— ${totalPending}개 후보 (${conceptsWith}개 개념)</span></button>`
+                    : `<button class="block" onclick="viewCandidateReview()" style="margin-top:8px" disabled>🔍 진단 후보 검토 <span class="meta">— 대기 중인 후보 없음</span></button>`;
+            })()}
+
             ${top.length === 0 ? `
                 <p class="meta">아직 진단 데이터가 없어요.</p>
             ` : `
@@ -3221,6 +3234,133 @@ async function viewConceptProblems(conceptId) {
     state.mode = 'teacherConceptProblems';
     await ensureConceptLoaded(conceptId);
     render();
+}
+
+function viewCandidateReview() {
+    state.viewCandidateCid = null;
+    state.mode = 'teacherCandidates';
+    render();
+}
+
+async function viewCandidateConcept(conceptId) {
+    state.viewCandidateCid = conceptId;
+    state.mode = 'teacherCandidateConcept';
+    await ensureConceptLoaded(conceptId);
+    render();
+}
+
+function renderTeacherCandidates() {
+    const idx = state.problemsIndex || {};
+    const list = Object.entries(idx)
+        .filter(([, lvls]) => (lvls._pending || 0) > 0)
+        .map(([cid, lvls]) => ({ cid, count: lvls._pending }))
+        .sort((a, b) => a.cid.localeCompare(b.cid));
+
+    return `
+        <div class="card">
+            <div class="header-row">
+                <h2>🔍 진단 후보 검토</h2>
+                <button class="link-btn" onclick="backToTeacherDashboard()">← 대시보드</button>
+            </div>
+            <p class="meta">자동 루틴이 만든 진단 후보들. 좋은 문제는 <b>승격</b>하면 진단에 사용됩니다. 별로면 <b>거절</b>해서 제거하세요.</p>
+            ${list.length === 0 ? `
+                <p class="meta" style="margin-top:20px">검토할 후보가 없어요.</p>
+            ` : `
+                <ul class="weakness-list">
+                    ${list.map(({ cid, count }) => {
+                        const c = state.conceptsById[cid];
+                        const name = c ? c['개념명'] : cid;
+                        const area = c ? c['영역'] : '';
+                        return `<li class="student-row" onclick="viewCandidateConcept('${cid}')">
+                            <b>${cid} ${escapeHTML(name)}</b>
+                            <span class="meta">· ${escapeHTML(area)} · 후보 ${count}개</span>
+                        </li>`;
+                    }).join('')}
+                </ul>
+            `}
+        </div>
+    `;
+}
+
+function renderTeacherCandidateConcept() {
+    const cid = state.viewCandidateCid;
+    const c = state.conceptsById[cid];
+    if (!c) return '<div class="card"><p>개념 정보 없음.</p><button onclick="viewCandidateReview()">목록으로</button></div>';
+    const all = state.problemsByConceptId[cid] || [];
+    const candidates = all.filter(p => (p['용도'] || '').trim() === '진단검토');
+
+    return `
+        <div class="card">
+            <div class="header-row">
+                <h2>🔍 ${escapeHTML(c['개념명'])} <span class="meta" style="font-weight:normal">— 진단 후보 ${candidates.length}개</span></h2>
+                <button class="link-btn" onclick="viewCandidateReview()">← 목록</button>
+            </div>
+            <p class="meta">${cid} · ${escapeHTML(c['영역'])} · ${escapeHTML(c['학년단계'])}</p>
+
+            ${candidates.length === 0 ? `
+                <p class="meta" style="margin-top:20px">이 개념에 후보가 없어요.</p>
+            ` : candidates.map(p => _renderCandidateCard(p, cid)).join('')}
+        </div>
+    `;
+}
+
+function _renderCandidateCard(p, cid) {
+    const qid = p['문제ID'];
+    const distractors = [
+        { text: p['오답1'], weakness: p['약점1'], explanation: p['오답해설1'] || '' },
+        { text: p['오답2'], weakness: p['약점2'], explanation: p['오답해설2'] || '' },
+        { text: p['오답3'], weakness: p['약점3'], explanation: p['오답해설3'] || '' },
+        { text: p['오답4'], weakness: p['약점4'], explanation: p['오답해설4'] || '' },
+    ].filter(d => d.text);
+
+    const fileUrl = `https://github.com/wataryu00-boop/math-diagnostic/blob/main/problems/${cid}/${p['난이도']}.csv`;
+    const editUrl = fileUrl.replace('/blob/', '/edit/');
+
+    return `
+        <div class="candidate-card" style="border:1px solid #ddd; border-radius:8px; padding:16px; margin-top:16px">
+            <div class="meta" style="margin-bottom:8px">${qid} · 난도 ${p['난이도']} · ${escapeHTML(p['유형'] || '')}</div>
+            <p style="font-size:1.05em; font-weight:500">${escapeHTML(p['문제'])}</p>
+
+            <div style="background:#f0f9f0; padding:8px 12px; border-radius:6px; margin:12px 0">
+                <b>✅ 정답:</b> ${escapeHTML(p['정답'])}
+            </div>
+
+            <details>
+                <summary style="cursor:pointer; color:#666">매력 오답 4개 보기</summary>
+                <ul style="margin-top:8px">
+                    ${distractors.map((d, i) => `
+                        <li style="margin-bottom:8px">
+                            <b>오답 ${i+1}:</b> ${escapeHTML(d.text)}
+                            <div class="meta" style="margin-left:16px">
+                                약점 매핑: <code>${escapeHTML(d.weakness || '-')}</code>
+                                ${d.explanation ? `<br>· ${escapeHTML(d.explanation)}` : ''}
+                            </div>
+                        </li>
+                    `).join('')}
+                </ul>
+            </details>
+
+            ${p['해설'] ? `
+                <details style="margin-top:8px">
+                    <summary style="cursor:pointer; color:#666">해설 보기</summary>
+                    <p style="margin-top:8px; padding:8px 12px; background:#fafafa; border-radius:6px">${escapeHTML(p['해설'])}</p>
+                </details>
+            ` : ''}
+
+            <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap">
+                <a href="${editUrl}" target="_blank" rel="noopener" class="block" style="flex:1; min-width:140px; background:#0a7; color:white; text-align:center; text-decoration:none; padding:10px">
+                    👍 GitHub 에서 승격
+                </a>
+                <a href="${editUrl}" target="_blank" rel="noopener" class="block" style="flex:1; min-width:140px; background:#c44; color:white; text-align:center; text-decoration:none; padding:10px">
+                    👎 GitHub 에서 거절·삭제
+                </a>
+            </div>
+            <p class="meta" style="margin-top:8px; font-size:0.85em">
+                <b>승격:</b> 위 링크 → ${qid} 행의 <code>용도</code> 셀을 <code>진단검토</code> → <code>진단</code> 으로 수정 → Commit changes<br>
+                <b>거절:</b> 위 링크 → ${qid} 행 통째로 삭제 → Commit changes
+            </p>
+        </div>
+    `;
 }
 
 function renderTeacherProblems() {
