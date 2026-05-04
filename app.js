@@ -31,7 +31,8 @@ const state = {
     studyConceptId: null,    // 학생 - 개념 설명 페이지에서 보고 있는 개념
     viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
     viewCandidateCid: null,  // 선생님 - 진단 후보 검토에서 선택한 개념
-    pendingDecisions: {},    // 선생님 - { qid: 'promote'|'reject' } 처리 대기 중인 본인 결정
+    pendingDecisions: {},    // 선생님 - { qid: { decision, processed } } 본인이 신청한 모든 결정
+    processedDecisions: [],  // 선생님 - 최근 24시간 내 자동 루틴이 처리한 결정 (요약 섹션용)
     mastery: null,           // { [conceptId]: { correct_streak, total_seen, total_correct, ... } }
     masteryListFilter: null, // 'mastered' | 'developing' | 'weak' | 'untouched' | null
     recomputeBusy: false,    // 재계산 중 여부
@@ -3252,8 +3253,9 @@ async function viewCandidateConcept(conceptId) {
     render();
 }
 
-// 본인이 신청한 결정 목록 로드 (처리 여부 포함)
+// 본인이 신청한 결정 목록 로드 (처리 여부 포함) + 최근 24h 처리 요약 로드
 async function loadPendingDecisions() {
+    // 1) 카드용: 신청한 모든 결정 (qid 매핑)
     const { data, error } = await sb
         .from('candidate_decisions')
         .select('qid, decision, processed_at');
@@ -3266,6 +3268,25 @@ async function loadPendingDecisions() {
             };
         });
     }
+
+    // 2) 요약 섹션용: 최근 24시간 처리 완료 (카드가 사라진 경우에도 결과 확인)
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const { data: processed } = await sb
+        .from('candidate_decisions')
+        .select('qid, cid, decision, decided_at, processed_at, result')
+        .not('processed_at', 'is', null)
+        .gte('processed_at', since)
+        .order('processed_at', { ascending: false });
+    state.processedDecisions = processed || [];
+}
+
+// "3분 전 / 2시간 전 / 어제" 식 상대 시간 표시
+function _timeAgo(iso) {
+    const diff = (Date.now() - new Date(iso).getTime()) / 1000;
+    if (diff < 60) return '방금 전';
+    if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}시간 전`;
+    return `${Math.floor(diff / 86400)}일 전`;
 }
 
 // 카드의 "승격 신청" / "거절 신청" 버튼 onclick
@@ -3300,6 +3321,9 @@ function renderTeacherCandidates() {
                 <button class="link-btn" onclick="backToTeacherDashboard()">← 대시보드</button>
             </div>
             <p class="meta">자동 루틴이 만든 진단 후보들. 좋은 문제는 <b>승격</b>하면 진단에 사용됩니다. 별로면 <b>거절</b>해서 제거하세요.</p>
+
+            ${_renderProcessedDecisionsSection()}
+
             ${list.length === 0 ? `
                 <p class="meta" style="margin-top:20px">검토할 후보가 없어요.</p>
             ` : `
@@ -3316,6 +3340,36 @@ function renderTeacherCandidates() {
                 </ul>
             `}
         </div>
+    `;
+}
+
+// "최근 처리 결과" 섹션 — 자동 루틴이 처리한 결정 (24h)
+// result_text: 'promoted' | 'rejected' | 'not_found' | 'wrong_state:<현재용도>'
+function _renderProcessedDecisionsSection() {
+    const items = state.processedDecisions || [];
+    if (items.length === 0) return '';
+    const promoted = items.filter(r => r.result === 'promoted');
+    const rejected = items.filter(r => r.result === 'rejected');
+    const failed = items.filter(r => r.result !== 'promoted' && r.result !== 'rejected');
+
+    return `
+        <details style="margin-top:16px; padding:10px 14px; background:#eaf7ee; border-radius:8px" open>
+            <summary style="cursor:pointer; font-weight:600; color:#1a6d3a">
+                ✅ 최근 처리 결과 — 승격 ${promoted.length}건${rejected.length ? ` · 거절 ${rejected.length}건` : ''}${failed.length ? ` · 실패 ${failed.length}건` : ''} (24시간 이내)
+            </summary>
+            <ul style="margin-top:8px; padding-left:0; font-size:0.92em; list-style:none">
+                ${items.slice(0, 20).map(r => {
+                    const c = state.conceptsById[r.cid];
+                    const name = c ? c['개념명'] : r.cid;
+                    let label, color;
+                    if (r.result === 'promoted') { label = '✅ 승인 완료 (진단으로 승격)'; color = '#1a6d3a'; }
+                    else if (r.result === 'rejected') { label = '🗑️ 거절 완료 (삭제됨)'; color = '#7a3a3a'; }
+                    else { label = `⚠️ 실패 (${escapeHTML(r.result || '알 수 없음')})`; color = '#a04'; }
+                    return `<li style="margin:6px 0; color:${color}"><b>${label}</b> <span style="color:#444">— ${r.qid}</span> <span class="meta">· ${r.cid} ${escapeHTML(name)} · ${_timeAgo(r.processed_at)}</span></li>`;
+                }).join('')}
+            </ul>
+            ${items.length > 20 ? `<p class="meta" style="margin-top:6px">… 외 ${items.length - 20}건</p>` : ''}
+        </details>
     `;
 }
 
