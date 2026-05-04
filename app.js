@@ -993,7 +993,8 @@ function pickProblem(conceptId, opts = {}) {
     const askedDx = state.dx ? state.dx.asked : new Set();
     const askedPr = state.practice ? state.practice.asked : new Set();
     const pool = (state.problemsByConceptId[conceptId] || [])
-        .filter(p => !askedDx.has(p['문제ID']) && !askedPr.has(p['문제ID']));
+        .filter(p => !askedDx.has(p['문제ID']) && !askedPr.has(p['문제ID']))
+        .filter(p => (p['용도'] || '').trim() !== '진단검토');  // 교사 승격 대기 중인 진단 후보는 학습/진단 모두에서 제외
     if (pool.length === 0) return null;
     if (opts.diagnostic) {
         // 진단은 교사 검수된 진단 풀에서만 출제 (자동 생성 학습 문제 차단)
