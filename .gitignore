@@ -3,3 +3,11 @@
 .claude/
 node_modules/
 *.log
+
+# 자동 루틴이 작업 중 만드는 임시 도우미 스크립트 — 절대 commit 되면 안 됨
+gen_*.py
+rebuild_index.py
+rebuild_*.py
+fix_*.py
+tmp_*.py
+.auto-tools/
