@@ -31,6 +31,7 @@ const state = {
     studyConceptId: null,    // 학생 - 개념 설명 페이지에서 보고 있는 개념
     viewConceptId: null,     // 선생님 - 개념별 문제 보기에서 선택한 개념
     viewCandidateCid: null,  // 선생님 - 진단 후보 검토에서 선택한 개념
+    pendingDecisions: {},    // 선생님 - { qid: 'promote'|'reject' } 처리 대기 중인 본인 결정
     mastery: null,           // { [conceptId]: { correct_streak, total_seen, total_correct, ... } }
     masteryListFilter: null, // 'mastered' | 'developing' | 'weak' | 'untouched' | null
     recomputeBusy: false,    // 재계산 중 여부
@@ -3237,16 +3238,47 @@ async function viewConceptProblems(conceptId) {
     render();
 }
 
-function viewCandidateReview() {
+async function viewCandidateReview() {
     state.viewCandidateCid = null;
     state.mode = 'teacherCandidates';
+    await loadPendingDecisions();
     render();
 }
 
 async function viewCandidateConcept(conceptId) {
     state.viewCandidateCid = conceptId;
     state.mode = 'teacherCandidateConcept';
-    await ensureConceptLoaded(conceptId);
+    await Promise.all([ensureConceptLoaded(conceptId), loadPendingDecisions()]);
+    render();
+}
+
+// 본인이 신청해 아직 자동 루틴이 처리하지 않은 결정 목록 로드
+async function loadPendingDecisions() {
+    const { data, error } = await sb
+        .from('candidate_decisions')
+        .select('qid, decision')
+        .is('processed_at', null);
+    state.pendingDecisions = {};
+    if (!error && data) {
+        data.forEach(r => { state.pendingDecisions[r.qid] = r.decision; });
+    }
+}
+
+// 카드의 "승격 신청" / "거절 신청" 버튼 onclick
+async function submitDecision(cid, qid, decision, btnEl) {
+    const wasText = btnEl.textContent;
+    btnEl.disabled = true;
+    btnEl.textContent = '신청 중...';
+    const { error } = await sb.from('candidate_decisions').insert({
+        cid, qid, decision, decided_by: state.user.id,
+    });
+    if (error) {
+        alert('오류: ' + error.message);
+        btnEl.disabled = false;
+        btnEl.textContent = wasText;
+        return;
+    }
+    state.pendingDecisions[qid] = decision;
     render();
 }
 
@@ -3314,8 +3346,20 @@ function _renderCandidateCard(p, cid) {
         { text: p['오답4'], weakness: p['약점4'], explanation: p['오답해설4'] || '' },
     ].filter(d => d.text);
 
-    const fileUrl = `https://github.com/wataryu00-boop/math-diagnostic/blob/main/problems/${cid}/${p['난이도']}.csv`;
-    const editUrl = fileUrl.replace('/blob/', '/edit/');
+    const pendingDecision = state.pendingDecisions[qid];
+
+    const actionArea = pendingDecision
+        ? `<div style="margin-top:16px; padding:10px; background:#fff8e1; border-radius:6px; text-align:center; color:#7a6500">
+                ⏳ <b>${pendingDecision === 'promote' ? '승격' : '거절'} 신청 완료</b> — 다음 정각 자동 실행 시 적용됩니다 (최대 1시간)
+            </div>`
+        : `<div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap">
+                <button onclick="submitDecision('${cid}', '${qid}', 'promote', this)" class="block" style="flex:1; min-width:140px; background:#0a7; color:white; padding:10px; border:none; cursor:pointer; border-radius:6px">
+                    👍 진단으로 승격
+                </button>
+                <button onclick="submitDecision('${cid}', '${qid}', 'reject', this)" class="block" style="flex:1; min-width:140px; background:#c44; color:white; padding:10px; border:none; cursor:pointer; border-radius:6px">
+                    👎 거절·삭제
+                </button>
+            </div>`;
 
     return `
         <div class="candidate-card" style="border:1px solid #ddd; border-radius:8px; padding:16px; margin-top:16px">
@@ -3348,18 +3392,7 @@ function _renderCandidateCard(p, cid) {
                 </details>
             ` : ''}
 
-            <div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap">
-                <a href="${editUrl}" target="_blank" rel="noopener" class="block" style="flex:1; min-width:140px; background:#0a7; color:white; text-align:center; text-decoration:none; padding:10px">
-                    👍 GitHub 에서 승격
-                </a>
-                <a href="${editUrl}" target="_blank" rel="noopener" class="block" style="flex:1; min-width:140px; background:#c44; color:white; text-align:center; text-decoration:none; padding:10px">
-                    👎 GitHub 에서 거절·삭제
-                </a>
-            </div>
-            <p class="meta" style="margin-top:8px; font-size:0.85em">
-                <b>승격:</b> 위 링크 → ${qid} 행의 <code>용도</code> 셀을 <code>진단검토</code> → <code>진단</code> 으로 수정 → Commit changes<br>
-                <b>거절:</b> 위 링크 → ${qid} 행 통째로 삭제 → Commit changes
-            </p>
+            ${actionArea}
         </div>
     `;
 }
