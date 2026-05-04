@@ -3252,15 +3252,19 @@ async function viewCandidateConcept(conceptId) {
     render();
 }
 
-// 본인이 신청해 아직 자동 루틴이 처리하지 않은 결정 목록 로드
+// 본인이 신청한 결정 목록 로드 (처리 여부 포함)
 async function loadPendingDecisions() {
     const { data, error } = await sb
         .from('candidate_decisions')
-        .select('qid, decision')
-        .is('processed_at', null);
+        .select('qid, decision, processed_at');
     state.pendingDecisions = {};
     if (!error && data) {
-        data.forEach(r => { state.pendingDecisions[r.qid] = r.decision; });
+        data.forEach(r => {
+            state.pendingDecisions[r.qid] = {
+                decision: r.decision,
+                processed: !!r.processed_at,
+            };
+        });
     }
 }
 
@@ -3278,7 +3282,7 @@ async function submitDecision(cid, qid, decision, btnEl) {
         btnEl.textContent = wasText;
         return;
     }
-    state.pendingDecisions[qid] = decision;
+    state.pendingDecisions[qid] = { decision, processed: false };
     render();
 }
 
@@ -3346,13 +3350,22 @@ function _renderCandidateCard(p, cid) {
         { text: p['오답4'], weakness: p['약점4'], explanation: p['오답해설4'] || '' },
     ].filter(d => d.text);
 
-    const pendingDecision = state.pendingDecisions[qid];
+    const decisionEntry = state.pendingDecisions[qid];
 
-    const actionArea = pendingDecision
-        ? `<div style="margin-top:16px; padding:10px; background:#fff8e1; border-radius:6px; text-align:center; color:#7a6500">
-                ⏳ <b>${pendingDecision === 'promote' ? '승격' : '거절'} 신청 완료</b> — 다음 정각 자동 실행 시 적용됩니다 (최대 1시간)
-            </div>`
-        : `<div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap">
+    let actionArea;
+    if (decisionEntry && decisionEntry.processed) {
+        const label = decisionEntry.decision === 'promote' ? '진단으로 승격' : '거절·삭제';
+        const color = decisionEntry.decision === 'promote' ? '#0a7' : '#c44';
+        actionArea = `<div style="margin-top:16px; padding:10px; background:#f0f8f0; border-radius:6px; text-align:center; color:${color}; font-weight:bold">
+                ✅ ${label} 완료 — 루틴이 적용했습니다
+            </div>`;
+    } else if (decisionEntry) {
+        const label = decisionEntry.decision === 'promote' ? '승격' : '거절';
+        actionArea = `<div style="margin-top:16px; padding:10px; background:#fff8e1; border-radius:6px; text-align:center; color:#7a6500">
+                ⏳ <b>${label} 신청 완료</b> — 다음 정각 자동 실행 시 적용됩니다 (최대 1시간)
+            </div>`;
+    } else {
+        actionArea = `<div style="margin-top:16px; display:flex; gap:8px; flex-wrap:wrap">
                 <button onclick="submitDecision('${cid}', '${qid}', 'promote', this)" class="block" style="flex:1; min-width:140px; background:#0a7; color:white; padding:10px; border:none; cursor:pointer; border-radius:6px">
                     👍 진단으로 승격
                 </button>
@@ -3360,6 +3373,7 @@ function _renderCandidateCard(p, cid) {
                     👎 거절·삭제
                 </button>
             </div>`;
+    }
 
     return `
         <div class="candidate-card" style="border:1px solid #ddd; border-radius:8px; padding:16px; margin-top:16px">
