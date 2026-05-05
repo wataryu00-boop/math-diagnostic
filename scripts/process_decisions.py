@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-"""교사 결정 큐 처리 - 자동 루틴이 매번 호출.
+"""교사 결정 큐 처리 + 변경분 자체 commit/push - 자동 루틴이 매번 호출.
 
 사용법: python3 scripts/process_decisions.py
 출력 마지막 줄: [QUEUE-RESULT] 승격 X / 거절 Y / not_found Z / wrong_state W / error E
+
+처리할 결정이 있고 CSV 변경이 발생하면 _index.json 도 갱신하고
+git commit + push 까지 자체 수행. 루틴이 안 실행하더라도 git 로그에
+실행 흔적이 남으므로 디버깅 가능.
 """
 import csv
 import json
 import os
+import subprocess
 import sys
 import urllib.request
 
@@ -120,7 +125,66 @@ def main():
         f"not_found {stats['not_found']} / wrong_state {stats['wrong_state']} / error {stats['error']}"
     )
     print(summary)
-    return stats["promoted"] + stats["rejected"]
+
+    changed = stats["promoted"] + stats["rejected"]
+    if changed > 0:
+        rebuild_index()
+        commit_and_push(stats)
+    return changed
+
+
+def rebuild_index():
+    """변경 후 problems/_index.json 갱신."""
+    result = {}
+    for cid in sorted(os.listdir("problems")):
+        cid_dir = f"problems/{cid}"
+        if not os.path.isdir(cid_dir):
+            continue
+        levels, pending = {}, 0
+        for fname in sorted(os.listdir(cid_dir)):
+            if not fname.endswith(".csv"):
+                continue
+            level = fname.replace(".csv", "")
+            with open(f"{cid_dir}/{fname}", newline="", encoding="utf-8") as f:
+                rows = list(csv.reader(f))
+            if not rows:
+                continue
+            levels[level] = len(rows) - 1
+            try:
+                use_idx = rows[0].index("용도")
+                for row in rows[1:]:
+                    if len(row) > use_idx and row[use_idx] == "진단검토":
+                        pending += 1
+            except ValueError:
+                pass
+        if pending > 0:
+            levels["_pending"] = pending
+        result[cid] = levels
+    with open("problems/_index.json", "w", encoding="utf-8") as f:
+        json.dump(result, f, ensure_ascii=False, indent=2, sort_keys=True)
+    print("[QUEUE] _index.json 갱신")
+
+
+def commit_and_push(stats):
+    """변경분 commit + push. 충돌 시 한 번 rebase 후 재시도."""
+    msg = (
+        f"교사 결정 처리: 승격 {stats['promoted']} / 거절 {stats['rejected']}"
+        f" (자동 큐 처리 by process_decisions.py)"
+    )
+    try:
+        subprocess.run(["git", "add", "problems/"], check=True)
+        subprocess.run(["git", "commit", "-m", msg], check=True)
+    except subprocess.CalledProcessError as e:
+        print(f"[QUEUE-WARN] commit 실패: {e}")
+        return
+    for attempt in range(2):
+        push = subprocess.run(["git", "push", "origin", "main"])
+        if push.returncode == 0:
+            print(f"[QUEUE] commit + push 완료: {msg}")
+            return
+        print(f"[QUEUE-WARN] push 실패 (시도 {attempt + 1}), rebase 후 재시도...")
+        subprocess.run(["git", "pull", "--rebase", "origin", "main"])
+    print("[QUEUE-ERROR] push 최종 실패 — 다음 실행 때 다시 시도")
 
 
 if __name__ == "__main__":
