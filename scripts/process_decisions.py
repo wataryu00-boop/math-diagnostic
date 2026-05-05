@@ -82,7 +82,36 @@ def process_one(d):
     return "not_found"
 
 
+def sync_with_origin():
+    """origin/main 과 동기화. 충돌이면 abort + hard reset 으로 깨끗하게."""
+    fetch = subprocess.run(["git", "fetch", "origin", "main"], capture_output=True)
+    if fetch.returncode != 0:
+        print(f"[QUEUE-WARN] git fetch 실패: {fetch.stderr.decode().strip()}")
+        return
+    rebase_path = subprocess.run(
+        ["git", "rev-parse", "--git-path", "rebase-merge"],
+        capture_output=True, text=True,
+    ).stdout.strip()
+    if rebase_path and os.path.isdir(rebase_path):
+        subprocess.run(["git", "rebase", "--abort"], capture_output=True)
+    status = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True)
+    if status.stdout.strip():
+        subprocess.run(
+            ["git", "stash", "--include-untracked", "-m", "process_decisions auto-stash"],
+            capture_output=True,
+        )
+    pull = subprocess.run(
+        ["git", "pull", "--rebase", "origin", "main"],
+        capture_output=True, text=True,
+    )
+    if pull.returncode != 0:
+        print(f"[QUEUE-WARN] pull --rebase 실패, hard reset 으로 복구: {pull.stderr.strip()}")
+        subprocess.run(["git", "rebase", "--abort"], capture_output=True)
+        subprocess.run(["git", "reset", "--hard", "origin/main"], capture_output=True)
+
+
 def main():
+    sync_with_origin()
     try:
         decisions = call_rpc("fetch_pending_decisions", {"secret": SECRET})
     except Exception as e:
